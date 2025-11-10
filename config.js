@@ -12,13 +12,53 @@ const supabaseAuthRedirectUrl = runtimeEnv.SUPABASE_AUTH_REDIRECT_URL
   || '';
 const bucket = runtimeEnv.VIDEO_BUCKET || runtimeEnv.VITE_VIDEO_BUCKET || importEnv.VITE_VIDEO_BUCKET || 'videos';
 
+const resolveNumber = (value) => {
+  if (value === undefined || value === null || value === '') return undefined;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : undefined;
+};
+
+const maxFileSizeBytes = resolveNumber(
+  runtimeEnv.VIDEO_MAX_FILE_SIZE
+    || runtimeEnv.VITE_VIDEO_MAX_FILE_SIZE
+    || importEnv.VITE_VIDEO_MAX_FILE_SIZE,
+);
+
+let uploadChunkSize = resolveNumber(
+  runtimeEnv.UPLOAD_CHUNK_SIZE
+    || runtimeEnv.VITE_UPLOAD_CHUNK_SIZE
+    || importEnv.VITE_UPLOAD_CHUNK_SIZE,
+);
+
+if (!uploadChunkSize) {
+  const chunkSizeMb = resolveNumber(
+    runtimeEnv.UPLOAD_CHUNK_SIZE_MB
+      || runtimeEnv.VITE_UPLOAD_CHUNK_SIZE_MB
+      || importEnv.VITE_UPLOAD_CHUNK_SIZE_MB,
+  );
+  if (chunkSizeMb) {
+    uploadChunkSize = chunkSizeMb * 1024 * 1024;
+  }
+}
+
+if (!uploadChunkSize || uploadChunkSize <= 0) {
+  uploadChunkSize = 8 * 1024 * 1024;
+}
+
+const processFunctionName = runtimeEnv.SUPABASE_PROCESS_FUNCTION
+  || runtimeEnv.VITE_SUPABASE_PROCESS_FUNCTION
+  || importEnv.VITE_SUPABASE_PROCESS_FUNCTION
+  || 'process-video';
+
 export const APP_CONFIG = {
   supabaseUrl,
   supabaseAnonKey,
   supabaseAuthRedirectUrl,
   bucket,
-  maxFileSize: 300 * 1024 * 1024,
+  maxFileSize: maxFileSizeBytes && maxFileSizeBytes > 0 ? maxFileSizeBytes : 300 * 1024 * 1024,
   allowedMimeTypes: ['video/mp4'],
+  uploadChunkSize,
+  processFunctionName,
 };
 
 export const supabase = (supabaseUrl && supabaseAnonKey)

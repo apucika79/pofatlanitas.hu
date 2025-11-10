@@ -57,6 +57,15 @@
       </div>
       <!-- // [ADD] -->
       <div id="videoStatus" class="text-sm text-zinc-500"></div>
+      <div id="uploadProgress" class="hidden space-y-1">
+        <div class="flex items-center justify-between text-xs text-zinc-500">
+          <span id="uploadProgressLabel">Feltöltés</span>
+          <span id="uploadProgressPercent">0%</span>
+        </div>
+        <div class="h-2 bg-zinc-200 rounded-full overflow-hidden">
+          <div id="uploadProgressBar" class="h-full bg-black transition-all duration-300 ease-out" style="width: 0%"></div>
+        </div>
+      </div>
       <!-- // [END] -->
       <div id="videoList" class="grid gap-4 sm:grid-cols-1 md:grid-cols-2 xl:grid-cols-3"></div>
       <div class="mt-4 flex justify-center">
