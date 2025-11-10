@@ -10,13 +10,29 @@ const elements = {
   sendMagicLink: document.getElementById('sendMagicLink'),
   signOutButton: document.getElementById('signOut'),
   currentUserEmail: document.getElementById('currentUserEmail'),
+  insightsSection: document.getElementById('insightsSection'),
+  likes7d: document.getElementById('likes7d'),
+  flags7d: document.getElementById('flags7d'),
+  topLikedVideos: document.getElementById('topLikedVideos'),
+  topFlaggedVideos: document.getElementById('topFlaggedVideos'),
 };
 
 const state = {
   session: null,
   isAdmin: false,
   loading: false,
+  insightsLoading: false,
 };
+
+function getAggregateCount(value) {
+  if (Array.isArray(value) && value.length) {
+    const first = value[0];
+    if (first && typeof first.count === 'number') {
+      return first.count;
+    }
+  }
+  return 0;
+}
 
 function setStatus(message, type = 'info') {
   if (!elements.status) return;
@@ -52,18 +68,24 @@ function renderRows(videos) {
   elements.tableBody.innerHTML = '';
   if (!videos.length) {
     const row = document.createElement('tr');
-    row.innerHTML = '<td colspan="5" class="px-4 py-6 text-center text-sm text-zinc-500">Nincs jóváhagyásra váró videó.</td>';
+    row.innerHTML = '<td colspan="6" class="px-4 py-6 text-center text-sm text-zinc-500">Nincs jóváhagyásra váró videó.</td>';
     elements.tableBody.appendChild(row);
     return;
   }
 
   videos.forEach((video) => {
+    const flagCount = getAggregateCount(video.video_flags);
     const row = document.createElement('tr');
     row.className = 'border-b last:border-0';
     row.innerHTML = `
       <td class="px-4 py-3 font-medium">${escapeHtml(video.title)}</td>
       <td class="px-4 py-3 text-sm">${escapeHtml(video.category || '')}</td>
       <td class="px-4 py-3 text-sm">${new Date(video.created_at).toLocaleString('hu-HU')}</td>
+      <td class="px-4 py-3 text-sm">
+        ${flagCount
+          ? `<span class="inline-flex items-center gap-2 rounded-full bg-red-100 text-red-600 px-3 py-1 text-xs font-semibold">${flagCount} jelzés</span>`
+          : '<span class="text-xs text-zinc-400">Nincs jelzés</span>'}
+      </td>
       <td class="px-4 py-3 text-sm"><a class="underline" href="${buildVideoUrl(video.file_path)}" target="_blank" rel="noreferrer">Megnyitás</a></td>
       <td class="px-4 py-3">
         <div class="flex justify-end gap-2">
@@ -145,7 +167,7 @@ async function loadPending() {
   try {
     const { data, error } = await supabase
       .from('videos')
-      .select('id, title, category, file_path, created_at')
+      .select('id, title, category, file_path, created_at, video_flags(count)')
       .eq('status', 'pending')
       .order('created_at', { ascending: false });
     if (error) {
@@ -158,6 +180,99 @@ async function loadPending() {
     setStatus(data?.length ? `${data.length} videó vár moderációra.` : 'Nincs jóváhagyásra váró videó.');
   } finally {
     state.loading = false;
+  }
+}
+
+function renderTrendList(container, items, emptyMessage) {
+  if (!container) return;
+  container.innerHTML = '';
+  if (!items.length) {
+    const li = document.createElement('li');
+    li.className = 'text-zinc-400';
+    li.textContent = emptyMessage;
+    container.appendChild(li);
+    return;
+  }
+
+  items.forEach((item) => {
+    const li = document.createElement('li');
+    const labelSingular = item.labelSingular || item.label || '';
+    const labelPlural = item.labelPlural || item.label || '';
+    const label = item.count === 1 ? labelSingular : labelPlural;
+    const labelText = label ? `${item.count.toLocaleString('hu-HU')} ${label}` : item.count.toLocaleString('hu-HU');
+    li.innerHTML = `<span class="font-medium text-zinc-800">${escapeHtml(item.title)}</span><br><span class="chip-counter">${escapeHtml(labelText)}</span>`;
+    container.appendChild(li);
+  });
+}
+
+async function loadInsights() {
+  if (!state.isAdmin || !isSupabaseConfigured() || state.insightsLoading) {
+    return;
+  }
+  state.insightsLoading = true;
+  const sevenDaysAgo = new Date();
+  sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+  const sinceIso = sevenDaysAgo.toISOString();
+
+  try {
+    const [likesResponse, flagsResponse, videoStatsResponse] = await Promise.all([
+      supabase.from('video_likes').select('id', { count: 'exact', head: true }).gte('created_at', sinceIso),
+      supabase.from('video_flags').select('id', { count: 'exact', head: true }).gte('created_at', sinceIso),
+      supabase
+        .from('videos')
+        .select('id, title, status, video_likes(count), video_flags(count)')
+        .in('status', ['approved', 'pending']),
+    ]);
+
+    if (elements.likes7d) {
+      const likesCount = typeof likesResponse.count === 'number' ? likesResponse.count : 0;
+      elements.likes7d.textContent = likesCount.toLocaleString('hu-HU');
+    }
+
+    if (elements.flags7d) {
+      const flagCount = typeof flagsResponse.count === 'number' ? flagsResponse.count : 0;
+      elements.flags7d.textContent = flagCount.toLocaleString('hu-HU');
+    }
+
+    const stats = Array.isArray(videoStatsResponse.data) ? videoStatsResponse.data : [];
+    const likedVideos = stats
+      .map((item) => ({
+        id: item.id,
+        title: item.title,
+        count: getAggregateCount(item.video_likes),
+        labelSingular: 'like',
+        labelPlural: 'like-ok',
+      }))
+      .filter((item) => item.count > 0)
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 5);
+
+    const flaggedVideos = stats
+      .map((item) => ({
+        id: item.id,
+        title: item.title,
+        count: getAggregateCount(item.video_flags),
+        labelSingular: 'jelentés',
+        labelPlural: 'jelentések',
+      }))
+      .filter((item) => item.count > 0)
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 5);
+
+    renderTrendList(elements.topLikedVideos, likedVideos, 'Még nincs aktivitás.');
+    renderTrendList(elements.topFlaggedVideos, flaggedVideos, 'Nincs jelentett videó.');
+
+    if (elements.insightsSection) {
+      elements.insightsSection.classList.toggle('hidden', false);
+    }
+  } catch (error) {
+    console.error('Insight load failed', error);
+    if (elements.likes7d) elements.likes7d.textContent = '—';
+    if (elements.flags7d) elements.flags7d.textContent = '—';
+    renderTrendList(elements.topLikedVideos, [], 'Nem érhető el az adat.');
+    renderTrendList(elements.topFlaggedVideos, [], 'Nem érhető el az adat.');
+  } finally {
+    state.insightsLoading = false;
   }
 }
 
@@ -193,6 +308,7 @@ function handleSession(session) {
     console.error('Admin data load error', error);
     setStatus('Hiba történt a függőben lévő videók betöltésekor.', 'error');
   });
+  loadInsights().catch((error) => console.error('Admin insights error', error));
 }
 
 async function requestMagicLink(event) {

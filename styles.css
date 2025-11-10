@@ -32,4 +32,39 @@ dialog::backdrop { background: rgba(0,0,0,0.5); }
   font-size: 13px;
   font-weight: 500;
 }
+.video-actions {
+  border-top: 1px solid #f4f4f5;
+}
+.chip-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border-radius: 9999px;
+  padding: 6px 12px;
+  background: #f4f4f5;
+  font-size: 13px;
+  font-weight: 600;
+  transition: background .15s ease, color .15s ease, transform .1s ease;
+}
+.chip-button:hover {
+  background: #e4e4e7;
+}
+.chip-button:disabled {
+  opacity: .6;
+  cursor: not-allowed;
+}
+.chip-button.is-liked {
+  background: #dcfce7;
+  color: #047857;
+}
+.chip-button.is-liked:hover {
+  background: #bbf7d0;
+}
+.chip-button.is-flagged {
+  background: #fee2e2;
+  color: #b91c1c;
+}
+.chip-counter {
+  font-variant-numeric: tabular-nums;
+}
 /* // [END] */
