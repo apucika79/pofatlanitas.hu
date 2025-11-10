@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="hu">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>pofatlanitas.hu – Pofátlan közlekedés videón</title>
+  <meta name="description" content="Dashcam videók pofátlan közlekedési helyzetekről. Beküldött anyagok, közösségi válogatás." />
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+<body class="bg-zinc-50 text-zinc-900">
+  <header class="border-b bg-white sticky top-0 z-10">
+    <div class="max-w-6xl mx-auto px-4 py-3 flex items-center justify-between">
+      <a href="/" class="flex items-center gap-3">
+        <div class="w-10 h-10 rounded-lg bg-black text-white flex items-center justify-center font-bold">P</div>
+        <div class="leading-tight">
+          <div class="font-extrabold text-lg">pofatlanitas.hu</div>
+          <div class="text-xs text-zinc-500">Pofátlan közlekedés. Videón.</div>
+        </div>
+      </a>
+      <nav class="flex items-center gap-2">
+        <button id="openSubmit" class="px-3 py-2 rounded-lg border bg-black text-white text-sm hover:opacity-90">
+          Beküldés
+        </button>
+      </nav>
+    </div>
+  </header>
+
+  <section class="border-b bg-white">
+    <div class="max-w-6xl mx-auto px-4 py-3 flex flex-wrap items-center gap-2">
+      <select id="filterCategory" class="px-3 py-2 border rounded-lg text-sm">
+        <option value="osszes">Összes kategória</option>
+        <option value="keresztezodes">Kereszteződés</option>
+        <option value="buszsav">Buszsáv</option>
+        <option value="palyaszakasz">Pályaszakasz</option>
+        <option value="gyalogatkelo">Gyalogátkelő</option>
+        <option value="parkolas">Parkolás</option>
+      </select>
+      <select id="filterSort" class="px-3 py-2 border rounded-lg text-sm">
+        <option value="uj">Legújabb elöl</option>
+        <option value="nepszeru">Legnépszerűbb</option>
+      </select>
+      <input id="searchText" type="search" placeholder="Keresés cím/leírás alapján"
+             class="flex-1 min-w-[240px] px-3 py-2 border rounded-lg text-sm" />
+      <button id="clearFilters" class="px-3 py-2 border rounded-lg text-sm">Szűrők törlése</button>
+    </div>
+  </section>
+
+  <main class="max-w-6xl mx-auto px-4 py-6 grid grid-cols-1 lg:grid-cols-3 gap-6">
+    <section class="lg:col-span-2">
+      <h2 class="text-lg font-bold mb-3">Legfrissebb videók</h2>
+      <div id="videoList" class="grid gap-4"></div>
+      <div class="mt-4 flex justify-center">
+        <button id="loadMore" class="px-4 py-2 border rounded-lg text-sm">További videók</button>
+      </div>
+    </section>
+
+    <aside class="lg:col-span-1">
+      <div class="bg-white border rounded-xl p-4">
+        <h3 class="font-semibold mb-3">Top videók</h3>
+        <ol id="topList" class="list-decimal list-inside space-y-2 text-sm"></ol>
+      </div>
+      <div class="bg-white border rounded-xl p-4 mt-4">
+        <h3 class="font-semibold mb-2">Jogi megjegyzés</h3>
+        <p class="text-sm text-zinc-600">
+          A beküldött felvételeket moderáljuk. Személyes azonosítók kitakarása kötelező. Induláskor rendszámok publikálását nem engedjük.
+        </p>
+      </div>
+      <div class="bg-white border rounded-xl p-4 mt-4">
+        <h3 class="font-semibold mb-2">Kapcsolat</h3>
+        <p class="text-sm text-zinc-600">hello@pofatlanitas.hu</p>
+      </div>
+    </aside>
+  </main>
+
+  <dialog id="submitModal" class="rounded-xl p-0 w-[95vw] max-w-xl">
+    <form method="dialog" class="bg-white rounded-xl border">
+      <div class="p-4 border-b flex items-center justify-between">
+        <div class="font-semibold">Videó beküldése</div>
+        <button id="closeSubmit" class="text-sm px-2 py-1 border rounded-lg">Bezár</button>
+      </div>
+      <div class="p-4 grid gap-3">
+        <input id="inpTitle" class="px-3 py-2 border rounded-lg text-sm" placeholder="Cím" />
+        <textarea id="inpDesc" class="px-3 py-2 border rounded-lg text-sm" rows="3" placeholder="Rövid leírás"></textarea>
+        <input id="inpPlace" class="px-3 py-2 border rounded-lg text-sm" placeholder="Helyszín (opcionális)" />
+        <select id="inpCat" class="px-3 py-2 border rounded-lg text-sm">
+          <option value="keresztezodes">Kereszteződés</option>
+          <option value="buszsav">Buszsáv</option>
+          <option value="palyaszakasz">Pályaszakasz</option>
+          <option value="gyalogatkelo">Gyalogátkelő</option>
+          <option value="parkolas">Parkolás</option>
+        </select>
+        <input id="inpYoutube" class="px-3 py-2 border rounded-lg text-sm" placeholder="YouTube link (https://youtu.be/... vagy watch?v=)" />
+        <div class="text-xs text-zinc-500">Induláskor csak YouTube beágyazás. Később saját feltöltés.</div>
+      </div>
+      <div class="p-4 border-t flex items-center justify-end gap-2">
+        <button id="btnSubmit" class="px-3 py-2 rounded-lg bg-black text-white text-sm">Beküldés</button>
+      </div>
+    </form>
+  </dialog>
+
+  <script src="./app.js"></script>
+</body>
+</html>
+
