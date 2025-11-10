@@ -7,6 +7,9 @@
   <meta name="description" content="Dashcam videók pofátlan közlekedési helyzetekről. Beküldött anyagok, közösségi válogatás." />
   <script src="https://cdn.tailwindcss.com"></script>
   <link rel="stylesheet" href="./styles.css" />
+  <!-- // [ADD] -->
+  <script type="module" src="./config.js"></script>
+  <!-- // [END] -->
 </head>
 <body class="bg-zinc-50 text-zinc-900">
   <header class="border-b bg-white sticky top-0 z-10">
@@ -29,7 +32,7 @@
   <section class="border-b bg-white">
     <div class="max-w-6xl mx-auto px-4 py-3 flex flex-wrap items-center gap-2">
       <select id="filterCategory" class="px-3 py-2 border rounded-lg text-sm">
-        <option value="osszes">Összes kategória</option>
+        <option value="">Összes kategória</option>
         <option value="keresztezodes">Kereszteződés</option>
         <option value="buszsav">Buszsáv</option>
         <option value="palyaszakasz">Pályaszakasz</option>
@@ -37,8 +40,8 @@
         <option value="parkolas">Parkolás</option>
       </select>
       <select id="filterSort" class="px-3 py-2 border rounded-lg text-sm">
-        <option value="uj">Legújabb elöl</option>
-        <option value="nepszeru">Legnépszerűbb</option>
+        <option value="created_at">Legújabb elöl</option>
+        <option value="views">Legnépszerűbb</option>
       </select>
       <input id="searchText" type="search" placeholder="Keresés cím/leírás alapján"
              class="flex-1 min-w-[240px] px-3 py-2 border rounded-lg text-sm" />
@@ -46,27 +49,33 @@
     </div>
   </section>
 
-  <main class="max-w-6xl mx-auto px-4 py-6 grid grid-cols-1 lg:grid-cols-3 gap-6">
-    <section class="lg:col-span-2">
-      <h2 class="text-lg font-bold mb-3">Legfrissebb videók</h2>
-      <div id="videoList" class="grid gap-4"></div>
+  <main class="max-w-6xl mx-auto px-4 py-6 grid gap-6 lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
+    <section class="space-y-4">
+      <div class="flex items-center justify-between">
+        <h2 class="text-lg font-bold">Legfrissebb videók</h2>
+        <span id="resultCounter" class="text-xs text-zinc-500"></span>
+      </div>
+      <!-- // [ADD] -->
+      <div id="videoStatus" class="text-sm text-zinc-500"></div>
+      <!-- // [END] -->
+      <div id="videoList" class="grid gap-4 sm:grid-cols-1 md:grid-cols-2 xl:grid-cols-3"></div>
       <div class="mt-4 flex justify-center">
         <button id="loadMore" class="px-4 py-2 border rounded-lg text-sm">További videók</button>
       </div>
     </section>
 
-    <aside class="lg:col-span-1">
+    <aside class="space-y-4">
       <div class="bg-white border rounded-xl p-4">
         <h3 class="font-semibold mb-3">Top videók</h3>
         <ol id="topList" class="list-decimal list-inside space-y-2 text-sm"></ol>
       </div>
-      <div class="bg-white border rounded-xl p-4 mt-4">
+      <div class="bg-white border rounded-xl p-4">
         <h3 class="font-semibold mb-2">Jogi megjegyzés</h3>
         <p class="text-sm text-zinc-600">
           A beküldött felvételeket moderáljuk. Személyes azonosítók kitakarása kötelező. Induláskor rendszámok publikálását nem engedjük.
         </p>
       </div>
-      <div class="bg-white border rounded-xl p-4 mt-4">
+      <div class="bg-white border rounded-xl p-4">
         <h3 class="font-semibold mb-2">Kapcsolat</h3>
         <p class="text-sm text-zinc-600">hello@pofatlanitas.hu</p>
       </div>
@@ -79,19 +88,53 @@
         <div class="font-semibold">Videó beküldése</div>
         <button id="closeSubmit" class="text-sm px-2 py-1 border rounded-lg">Bezár</button>
       </div>
-      <div class="p-4 grid gap-3">
-        <input id="inpTitle" class="px-3 py-2 border rounded-lg text-sm" placeholder="Cím" />
-        <textarea id="inpDesc" class="px-3 py-2 border rounded-lg text-sm" rows="3" placeholder="Rövid leírás"></textarea>
-        <input id="inpPlace" class="px-3 py-2 border rounded-lg text-sm" placeholder="Helyszín (opcionális)" />
-        <select id="inpCat" class="px-3 py-2 border rounded-lg text-sm">
-          <option value="keresztezodes">Kereszteződés</option>
-          <option value="buszsav">Buszsáv</option>
-          <option value="palyaszakasz">Pályaszakasz</option>
-          <option value="gyalogatkelo">Gyalogátkelő</option>
-          <option value="parkolas">Parkolás</option>
-        </select>
-        <input id="inpYoutube" class="px-3 py-2 border rounded-lg text-sm" placeholder="YouTube link (https://youtu.be/... vagy watch?v=)" />
-        <div class="text-xs text-zinc-500">Induláskor csak YouTube beágyazás. Később saját feltöltés.</div>
+      <div class="p-4 grid gap-4 text-sm">
+        <!-- // [ADD] -->
+        <div class="space-y-1">
+          <label for="inpTitle" class="font-medium">Cím <span class="text-red-500">*</span></label>
+          <input id="inpTitle" maxlength="120" class="px-3 py-2 border rounded-lg text-sm" placeholder="Rövid, beszédes cím" required />
+          <p class="text-xs text-zinc-500">Max. 120 karakter.</p>
+        </div>
+        <div class="space-y-1">
+          <label for="inpDesc" class="font-medium">Leírás</label>
+          <textarea id="inpDesc" maxlength="500" class="px-3 py-2 border rounded-lg text-sm" rows="4" placeholder="Mi történik a videóban?"></textarea>
+          <p class="text-xs text-zinc-500">Max. 500 karakter.</p>
+        </div>
+        <div class="grid gap-4 md:grid-cols-2">
+          <div class="space-y-1">
+            <label for="inpPlace" class="font-medium">Helyszín</label>
+            <input id="inpPlace" class="px-3 py-2 border rounded-lg text-sm" placeholder="Település, út, kereszteződés" />
+          </div>
+          <div class="space-y-1">
+            <label for="inpCat" class="font-medium">Kategória</label>
+            <select id="inpCat" class="px-3 py-2 border rounded-lg text-sm">
+              <option value="keresztezodes">Kereszteződés</option>
+              <option value="buszsav">Buszsáv</option>
+              <option value="palyaszakasz">Pályaszakasz</option>
+              <option value="gyalogatkelo">Gyalogátkelő</option>
+              <option value="parkolas">Parkolás</option>
+            </select>
+          </div>
+        </div>
+        <div class="space-y-2">
+          <label class="font-medium">Videófájl <span class="text-red-500">*</span></label>
+          <div id="dropZone" class="drop-zone">
+            <div class="space-y-1 text-center">
+              <p class="font-medium">Húzd ide a fájlt vagy kattints a kiválasztáshoz</p>
+              <p class="text-xs text-zinc-500">MP4, maximum 300 MB</p>
+              <button type="button" id="btnBrowse" class="px-3 py-1 border rounded-lg text-xs">Fájl kiválasztása</button>
+            </div>
+          </div>
+          <input id="inpFile" type="file" accept="video/mp4" hidden />
+          <div id="fileInfo" class="text-xs text-zinc-500"></div>
+        </div>
+        <div class="space-y-1">
+          <label for="inpReporterEmail" class="font-medium">Elérhetőség (opcionális)</label>
+          <input id="inpReporterEmail" type="email" class="px-3 py-2 border rounded-lg text-sm" placeholder="Email, ha vállalod a kapcsolatot" />
+          <p class="text-xs text-zinc-500">Vendégként is beküldhetsz videót. Email csak admin számára látható.</p>
+        </div>
+        <p id="submitError" class="hidden text-xs text-red-500"></p>
+        <!-- // [END] -->
       </div>
       <div class="p-4 border-t flex items-center justify-end gap-2">
         <button id="btnSubmit" class="px-3 py-2 rounded-lg bg-black text-white text-sm">Beküldés</button>
@@ -99,32 +142,34 @@
     </form>
   </dialog>
 
-  <!-- Részletek modal -->
-<dialog id="detailsModal" class="rounded-xl p-0 w-[95vw] max-w-3xl">
-  <form method="dialog" class="bg-white rounded-xl border">
-    <div class="p-4 border-b flex items-center justify-between">
-      <div class="font-semibold">Videó részletei</div>
-      <button id="closeDetails" class="text-sm px-2 py-1 border rounded-lg">Bezár</button>
-    </div>
-    <div class="p-4 grid gap-4">
-      <div class="aspect-video w-full">
-        <iframe id="detFrame" width="100%" height="100%" src="" title="Videó"
-          frameborder="0" allowfullscreen></iframe>
+  <dialog id="detailsModal" class="rounded-xl p-0 w-[95vw] max-w-3xl">
+    <form method="dialog" class="bg-white rounded-xl border">
+      <div class="p-4 border-b flex items-center justify-between">
+        <div class="font-semibold">Videó részletei</div>
+        <button id="closeDetails" class="text-sm px-2 py-1 border rounded-lg">Bezár</button>
       </div>
-      <div>
-        <h3 id="detTitle" class="text-lg font-semibold"></h3>
-        <p id="detDesc" class="text-sm text-zinc-700 mt-1"></p>
-        <p id="detMeta" class="text-xs text-zinc-500 mt-1"></p>
+      <div class="p-4 grid gap-4">
+        <!-- // [ADD] -->
+        <div class="w-full">
+          <video id="detVideo" class="w-full rounded-lg bg-black" controls preload="metadata"></video>
+        </div>
+        <div>
+          <h3 id="detTitle" class="text-lg font-semibold"></h3>
+          <p id="detDesc" class="text-sm text-zinc-700 mt-1"></p>
+          <p id="detMeta" class="text-xs text-zinc-500 mt-1"></p>
+        </div>
+        <div class="flex flex-wrap gap-2 items-center text-xs text-zinc-500">
+          <span id="detViews"></span>
+          <span id="detCategory" class="badge"></span>
+          <span id="detPlace"></span>
+        </div>
+        <!-- // [END] -->
       </div>
-      <div class="flex flex-wrap gap-2">
-        <button id="btnCopyLink" class="px-3 py-2 border rounded-lg text-sm">Link másolása</button>
-        <span id="detViews" class="text-xs text-zinc-500 self-center"></span>
-      </div>
-    </div>
-  </form>
-</dialog>
+    </form>
+  </dialog>
 
-  <script src="./app.js"></script>
+  <!-- // [ADD] -->
+  <script type="module" src="./app.js"></script>
+  <!-- // [END] -->
 </body>
 </html>
-
