@@ -6,16 +6,17 @@ const runtimeEnv = window.__ENV__ || window.ENV || {};
 
 const supabaseUrl = runtimeEnv.SUPABASE_URL || runtimeEnv.VITE_SUPABASE_URL || importEnv.VITE_SUPABASE_URL || '';
 const supabaseAnonKey = runtimeEnv.SUPABASE_ANON_KEY || runtimeEnv.VITE_SUPABASE_ANON_KEY || importEnv.VITE_SUPABASE_ANON_KEY || '';
+const supabaseAuthRedirectUrl = runtimeEnv.SUPABASE_AUTH_REDIRECT_URL
+  || runtimeEnv.VITE_SUPABASE_AUTH_REDIRECT_URL
+  || importEnv.VITE_SUPABASE_AUTH_REDIRECT_URL
+  || '';
 const bucket = runtimeEnv.VIDEO_BUCKET || runtimeEnv.VITE_VIDEO_BUCKET || importEnv.VITE_VIDEO_BUCKET || 'videos';
-const adminModeRaw = runtimeEnv.ADMIN_MODE || runtimeEnv.VITE_ADMIN_MODE || importEnv.VITE_ADMIN_MODE || 'false';
-
-const adminMode = String(adminModeRaw).toLowerCase() === 'true';
 
 export const APP_CONFIG = {
   supabaseUrl,
   supabaseAnonKey,
+  supabaseAuthRedirectUrl,
   bucket,
-  adminMode,
   maxFileSize: 300 * 1024 * 1024,
   allowedMimeTypes: ['video/mp4'],
 };
@@ -23,8 +24,9 @@ export const APP_CONFIG = {
 export const supabase = (supabaseUrl && supabaseAnonKey)
   ? createClient(supabaseUrl, supabaseAnonKey, {
       auth: {
-        persistSession: false,
-        detectSessionInUrl: false,
+        persistSession: true,
+        detectSessionInUrl: true,
+        autoRefreshToken: true,
       },
     })
   : null;

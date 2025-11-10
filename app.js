@@ -521,9 +521,6 @@ async function init() {
   handleDragEvents();
   await fetchVideos(true);
   await renderTopList();
-  if (APP_CONFIG.adminMode) {
-    updateStatus('ADMIN MODE aktív – minden videófrissítés azonnal látszik.', 'info');
-  }
 }
 
 init().catch((error) => {

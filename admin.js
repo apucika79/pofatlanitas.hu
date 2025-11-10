@@ -1,20 +1,43 @@
 // [ADD]
 import { supabase, APP_CONFIG } from './config.js';
 
-const statusEl = document.getElementById('adminStatus');
-const tableBody = document.getElementById('pendingTable');
+const elements = {
+  status: document.getElementById('adminStatus'),
+  tableBody: document.getElementById('pendingTable'),
+  authSection: document.getElementById('authSection'),
+  adminPanel: document.getElementById('adminPanel'),
+  emailInput: document.getElementById('adminEmail'),
+  sendMagicLink: document.getElementById('sendMagicLink'),
+  signOutButton: document.getElementById('signOut'),
+  currentUserEmail: document.getElementById('currentUserEmail'),
+};
+
+const state = {
+  session: null,
+  isAdmin: false,
+  loading: false,
+};
 
 function setStatus(message, type = 'info') {
-  if (!statusEl) return;
-  statusEl.textContent = message || '';
-  statusEl.classList.remove('text-red-500', 'text-emerald-600', 'text-zinc-500');
+  if (!elements.status) return;
+  elements.status.textContent = message || '';
+  elements.status.classList.remove('text-red-500', 'text-emerald-600', 'text-zinc-500');
   if (!message || type === 'info') {
-    statusEl.classList.add('text-zinc-500');
+    elements.status.classList.add('text-zinc-500');
   } else if (type === 'error') {
-    statusEl.classList.add('text-red-500');
+    elements.status.classList.add('text-red-500');
   } else if (type === 'success') {
-    statusEl.classList.add('text-emerald-600');
+    elements.status.classList.add('text-emerald-600');
   }
+}
+
+function toggleElement(element, shouldShow) {
+  if (!element) return;
+  element.classList.toggle('hidden', !shouldShow);
+}
+
+function isSupabaseConfigured() {
+  return Boolean(supabase && APP_CONFIG.supabaseUrl && APP_CONFIG.supabaseAnonKey);
 }
 
 function buildVideoUrl(path) {
@@ -25,11 +48,12 @@ function buildVideoUrl(path) {
 }
 
 function renderRows(videos) {
-  tableBody.innerHTML = '';
+  if (!elements.tableBody) return;
+  elements.tableBody.innerHTML = '';
   if (!videos.length) {
     const row = document.createElement('tr');
     row.innerHTML = '<td colspan="5" class="px-4 py-6 text-center text-sm text-zinc-500">Nincs jóváhagyásra váró videó.</td>';
-    tableBody.appendChild(row);
+    elements.tableBody.appendChild(row);
     return;
   }
 
@@ -51,7 +75,7 @@ function renderRows(videos) {
     row.querySelectorAll('button').forEach((button) => {
       button.addEventListener('click', () => handleAction(button.dataset.id, button.dataset.action));
     });
-    tableBody.appendChild(row);
+    elements.tableBody.appendChild(row);
   });
 }
 
@@ -65,8 +89,29 @@ function escapeHtml(value = '') {
   })[char]);
 }
 
+function isAdminUser(user) {
+  if (!user) return false;
+  const appRoles = Array.isArray(user?.app_metadata?.roles) ? user.app_metadata.roles : [];
+  if (appRoles.includes('admin')) return true;
+  if (typeof user?.app_metadata?.role === 'string' && user.app_metadata.role === 'admin') return true;
+  if (user?.user_metadata?.is_admin === true) return true;
+  if (typeof user?.user_metadata?.role === 'string' && user.user_metadata.role === 'admin') return true;
+  return false;
+}
+
+function updateCurrentUser(session) {
+  if (!elements.currentUserEmail) return;
+  const email = session?.user?.email || '';
+  elements.currentUserEmail.textContent = email;
+  toggleElement(elements.currentUserEmail, Boolean(email));
+  toggleElement(elements.signOutButton, Boolean(session));
+}
+
 async function handleAction(id, action) {
-  if (!supabase) return;
+  if (!state.isAdmin || !supabase) {
+    setStatus('Nincs admin jogosultság.', 'error');
+    return;
+  }
   setStatus('Művelet folyamatban…');
   const statusValue = action === 'approve' ? 'approved' : 'rejected';
   const { error } = await supabase
@@ -83,34 +128,154 @@ async function handleAction(id, action) {
 }
 
 async function loadPending() {
-  if (!APP_CONFIG.adminMode) {
-    setStatus('Állítsd be az ADMIN_MODE=true értéket a config.js / .env fájlban a moderációhoz.', 'error');
+  if (!state.isAdmin) {
     renderRows([]);
     return;
   }
-  if (!supabase || !APP_CONFIG.supabaseUrl || !APP_CONFIG.supabaseAnonKey) {
+  if (!isSupabaseConfigured()) {
     setStatus('Supabase konfiguráció hiányzik.', 'error');
     renderRows([]);
     return;
   }
-  setStatus('Videók betöltése…');
-  const { data, error } = await supabase
-    .from('videos')
-    .select('id, title, category, file_path, created_at')
-    .eq('status', 'pending')
-    .order('created_at', { ascending: false });
-  if (error) {
-    console.error('Pending fetch failed', error);
-    setStatus('Nem sikerült betölteni a függőben lévő videókat.', 'error');
-    renderRows([]);
+  if (state.loading) {
     return;
   }
-  renderRows(data ?? []);
-  setStatus(data?.length ? `${data.length} videó vár moderációra.` : 'Nincs jóváhagyásra váró videó.');
+  state.loading = true;
+  setStatus('Videók betöltése…');
+  try {
+    const { data, error } = await supabase
+      .from('videos')
+      .select('id, title, category, file_path, created_at')
+      .eq('status', 'pending')
+      .order('created_at', { ascending: false });
+    if (error) {
+      console.error('Pending fetch failed', error);
+      setStatus('Nem sikerült betölteni a függőben lévő videókat.', 'error');
+      renderRows([]);
+      return;
+    }
+    renderRows(data ?? []);
+    setStatus(data?.length ? `${data.length} videó vár moderációra.` : 'Nincs jóváhagyásra váró videó.');
+  } finally {
+    state.loading = false;
+  }
 }
 
-loadPending().catch((error) => {
+function clearTable() {
+  if (!elements.tableBody) return;
+  elements.tableBody.innerHTML = '';
+}
+
+function handleSession(session) {
+  state.session = session;
+  state.isAdmin = isAdminUser(session?.user);
+  updateCurrentUser(session);
+
+  if (!session) {
+    toggleElement(elements.adminPanel, false);
+    toggleElement(elements.authSection, true);
+    clearTable();
+    setStatus('Jelentkezz be a moderációhoz.');
+    return;
+  }
+
+  if (!state.isAdmin) {
+    toggleElement(elements.adminPanel, false);
+    toggleElement(elements.authSection, true);
+    clearTable();
+    setStatus('Nincs admin jogosultságod ehhez a felülethez.', 'error');
+    return;
+  }
+
+  toggleElement(elements.authSection, false);
+  toggleElement(elements.adminPanel, true);
+  loadPending().catch((error) => {
+    console.error('Admin data load error', error);
+    setStatus('Hiba történt a függőben lévő videók betöltésekor.', 'error');
+  });
+}
+
+async function requestMagicLink(event) {
+  event?.preventDefault();
+  if (!supabase) return;
+  const email = elements.emailInput?.value?.trim();
+  if (!email) {
+    setStatus('Add meg az e-mail címedet a belépéshez.', 'error');
+    return;
+  }
+
+  toggleElement(elements.authSection, true);
+  if (elements.sendMagicLink) {
+    elements.sendMagicLink.disabled = true;
+  }
+  setStatus('Belépési link küldése…');
+
+  const redirectUrl = APP_CONFIG.supabaseAuthRedirectUrl || `${window.location.origin}${window.location.pathname}`;
+
+  const { error } = await supabase.auth.signInWithOtp({
+    email,
+    options: {
+      emailRedirectTo: redirectUrl,
+    },
+  });
+
+  if (elements.sendMagicLink) {
+    elements.sendMagicLink.disabled = false;
+  }
+
+  if (error) {
+    console.error('Magic link request failed', error);
+    setStatus('Nem sikerült elküldeni a belépési linket.', 'error');
+    return;
+  }
+
+  setStatus('Ellenőrizd az e-mail fiókodat a belépési linkért.', 'success');
+}
+
+async function signOut(event) {
+  event?.preventDefault();
+  if (!supabase) return;
+  const { error } = await supabase.auth.signOut();
+  if (error) {
+    console.error('Sign-out failed', error);
+    setStatus('Nem sikerült kijelentkezni.', 'error');
+    return;
+  }
+  setStatus('Sikeresen kijelentkeztél.', 'success');
+}
+
+async function init() {
+  if (!isSupabaseConfigured()) {
+    toggleElement(elements.adminPanel, false);
+    toggleElement(elements.authSection, false);
+    setStatus('Supabase konfiguráció hiányzik.', 'error');
+    return;
+  }
+
+  toggleElement(elements.authSection, true);
+
+  if (elements.sendMagicLink) {
+    elements.sendMagicLink.addEventListener('click', requestMagicLink);
+  }
+  if (elements.signOutButton) {
+    elements.signOutButton.addEventListener('click', signOut);
+  }
+
+  supabase.auth.onAuthStateChange((_event, session) => {
+    handleSession(session);
+  });
+
+  const { data, error } = await supabase.auth.getSession();
+  if (error) {
+    console.error('Session fetch failed', error);
+    setStatus('Nem sikerült lekérdezni a bejelentkezési állapotot.', 'error');
+    return;
+  }
+  handleSession(data?.session ?? null);
+}
+
+init().catch((error) => {
   console.error('Admin init error', error);
-  setStatus('Hiba történt az admin felület betöltésekor.', 'error');
+  setStatus('Hiba történt az admin felület inicializálásakor.', 'error');
 });
 // [END]
