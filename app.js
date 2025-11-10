@@ -31,6 +31,8 @@ const inpCat = document.getElementById("inpCat");
 const inpYoutube = document.getElementById("inpYoutube");
 const btnSubmit = document.getElementById("btnSubmit");
 
+
+
 const ytEmbed = (id) => `https://www.youtube.com/embed/${id}`;
 
 function computeVisible() {

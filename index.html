@@ -99,6 +99,31 @@
     </form>
   </dialog>
 
+  <!-- Részletek modal -->
+<dialog id="detailsModal" class="rounded-xl p-0 w-[95vw] max-w-3xl">
+  <form method="dialog" class="bg-white rounded-xl border">
+    <div class="p-4 border-b flex items-center justify-between">
+      <div class="font-semibold">Videó részletei</div>
+      <button id="closeDetails" class="text-sm px-2 py-1 border rounded-lg">Bezár</button>
+    </div>
+    <div class="p-4 grid gap-4">
+      <div class="aspect-video w-full">
+        <iframe id="detFrame" width="100%" height="100%" src="" title="Videó"
+          frameborder="0" allowfullscreen></iframe>
+      </div>
+      <div>
+        <h3 id="detTitle" class="text-lg font-semibold"></h3>
+        <p id="detDesc" class="text-sm text-zinc-700 mt-1"></p>
+        <p id="detMeta" class="text-xs text-zinc-500 mt-1"></p>
+      </div>
+      <div class="flex flex-wrap gap-2">
+        <button id="btnCopyLink" class="px-3 py-2 border rounded-lg text-sm">Link másolása</button>
+        <span id="detViews" class="text-xs text-zinc-500 self-center"></span>
+      </div>
+    </div>
+  </form>
+</dialog>
+
   <script src="./app.js"></script>
 </body>
 </html>
