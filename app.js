@@ -2,6 +2,8 @@
 import { supabase, APP_CONFIG } from './config.js';
 
 const PAGE_SIZE = 12;
+const LIKE_RATE_LIMIT_MS = 1500;
+const FLAG_MIN_REASON_LENGTH = 10;
 const state = {
   category: '',
   sort: 'created_at',
@@ -54,9 +56,30 @@ const elements = {
   detViews: document.getElementById('detViews'),
   detCategory: document.getElementById('detCategory'),
   detPlace: document.getElementById('detPlace'),
+  flagModal: document.getElementById('flagModal'),
+  flagForm: document.getElementById('flagForm'),
+  closeFlag: document.getElementById('closeFlag'),
+  flagReason: document.getElementById('flagReason'),
+  flagError: document.getElementById('flagError'),
+  flagSubmit: document.getElementById('submitFlag'),
 };
 
 const videoCache = new Map();
+
+const authState = {
+  session: null,
+  user: null,
+  likedVideoIds: new Set(),
+};
+
+const interactionState = {
+  likeRateLimit: new Map(),
+  flagSubmitting: false,
+};
+
+const flagState = {
+  currentVideoId: null,
+};
 
 const STATUS_MESSAGES = {
   uploading: { message: 'Feltöltés folyamatban…', type: 'info' },
@@ -77,6 +100,16 @@ const PROGRESS_MESSAGES = {
   rejected: { label: 'A videót elutasítottuk.', tone: 'error' },
   failed: { label: 'A feldolgozás sikertelen.', tone: 'error' },
 };
+
+function extractAggregateCount(value) {
+  if (Array.isArray(value) && value.length) {
+    const first = value[0];
+    if (first && typeof first.count === 'number') {
+      return first.count;
+    }
+  }
+  return 0;
+}
 
 function applyProgressTone(tone) {
   if (!elements.uploadProgressBar) return;
@@ -306,6 +339,21 @@ function resetList() {
   elements.list.innerHTML = '';
 }
 
+function transformVideoRecord(raw) {
+  if (!raw) return null;
+  const likesCount = extractAggregateCount(raw.video_likes);
+  const flagsCount = extractAggregateCount(raw.video_flags);
+  const processed = {
+    ...raw,
+    likes_count: likesCount,
+    flags_count: flagsCount,
+    liked_by_user: authState.likedVideoIds.has(raw.id),
+  };
+  delete processed.video_likes;
+  delete processed.video_flags;
+  return processed;
+}
+
 async function fetchVideos(reset = false) {
   if (!supabase || !APP_CONFIG.supabaseUrl || !APP_CONFIG.supabaseAnonKey) {
     updateStatus('Állítsd be a Supabase kulcsokat a config.js / .env alapján.');
@@ -329,7 +377,7 @@ async function fetchVideos(reset = false) {
 
   let query = supabase
     .from('videos')
-    .select('id, title, description, place, category, status, file_path, thumb_path, views, created_at', { count: 'exact' })
+    .select('id, title, description, place, category, status, file_path, thumb_path, views, created_at, video_likes(count), video_flags(count)', { count: 'exact' })
     .eq('status', 'approved');
 
   if (state.category) {
@@ -361,13 +409,15 @@ async function fetchVideos(reset = false) {
   state.total = typeof count === 'number' ? count : state.total;
   updateCounter();
 
+  const processedData = (data ?? []).map(transformVideoRecord).filter(Boolean);
+
   if (reset) {
-    state.videos = data ?? [];
+    state.videos = processedData;
   } else {
-    state.videos = state.videos.concat(data ?? []);
+    state.videos = state.videos.concat(processedData);
   }
 
-  (data ?? []).forEach((video) => {
+  processedData.forEach((video) => {
     videoCache.set(video.id, video);
   });
 
@@ -407,15 +457,25 @@ function createVideoCard(video) {
   const body = document.createElement('div');
   body.className = 'p-4 space-y-2 flex-1 flex flex-col';
   body.innerHTML = `
-    <h3 class="font-semibold">${escapeHtml(video.title)}</h3>
-    <div class="text-sm text-zinc-600 overflow-hidden">${escapeHtml(video.description || 'Nincs leírás')}</div>
-    <div class="mt-auto flex flex-wrap items-center gap-2 text-xs text-zinc-500">
-      <span class="badge">${escapeHtml(labelFor(video.category))}</span>
-      <span>${formatDate(video.created_at)}</span>
-      ${video.place ? `<span>• ${escapeHtml(video.place)}</span>` : ''}
-      <span class="ml-auto">${(video.views || 0).toLocaleString('hu-HU')} megtekintés</span>
+    <h3 class="font-semibold" data-video-title>${escapeHtml(video.title)}</h3>
+    <div class="text-sm text-zinc-600 overflow-hidden" data-video-description>${escapeHtml(video.description || 'Nincs leírás')}</div>
+    <div class="mt-auto flex flex-wrap items-center gap-2 text-xs text-zinc-500" data-video-meta>
+      <span class="badge" data-video-category>${escapeHtml(labelFor(video.category))}</span>
+      <span data-video-date>${formatDate(video.created_at)}</span>
+      <span data-video-place class="${video.place ? '' : 'hidden'}">${video.place ? `• ${escapeHtml(video.place)}` : ''}</span>
+      <span class="ml-auto" data-video-views>${(video.views || 0).toLocaleString('hu-HU')} megtekintés</span>
     </div>
   `;
+
+  const actions = document.createElement('div');
+  actions.className = 'video-actions mt-3 pt-3 flex items-center gap-2 text-sm text-zinc-600 flex-wrap';
+
+  const likeButton = createLikeButton(video);
+  const flagButton = createFlagButton(video);
+
+  actions.appendChild(likeButton);
+  actions.appendChild(flagButton);
+  body.appendChild(actions);
 
   article.appendChild(thumb);
   article.appendChild(body);
@@ -423,12 +483,235 @@ function createVideoCard(video) {
   return article;
 }
 
+function createLikeButton(video) {
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = 'chip-button';
+  button.dataset.likeButton = 'true';
+  button.dataset.videoId = video.id;
+  button.setAttribute('aria-label', 'Videó kedvelése');
+  button.addEventListener('click', (event) => handleLikeClick(event, video.id));
+
+  const icon = document.createElement('span');
+  icon.textContent = '👍';
+  const label = document.createElement('span');
+  label.textContent = 'Tetszik';
+  const count = document.createElement('span');
+  count.dataset.likeCount = 'true';
+  count.className = 'chip-counter';
+
+  button.append(icon, label, count);
+  updateLikeButton(button, video);
+  return button;
+}
+
+function updateLikeButton(button, video) {
+  const liked = Boolean(video.liked_by_user);
+  button.classList.toggle('is-liked', liked);
+  button.setAttribute('aria-pressed', liked ? 'true' : 'false');
+  const countElement = button.querySelector('[data-like-count]');
+  if (countElement) {
+    countElement.textContent = (video.likes_count || 0).toLocaleString('hu-HU');
+  }
+}
+
+function createFlagButton(video) {
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = 'chip-button';
+  button.dataset.flagButton = 'true';
+  button.dataset.videoId = video.id;
+  button.setAttribute('aria-label', 'Videó jelentése');
+  button.addEventListener('click', (event) => handleFlagClick(event, video.id));
+
+  const icon = document.createElement('span');
+  icon.textContent = '🚩';
+  const label = document.createElement('span');
+  label.textContent = 'Jelentés';
+  const count = document.createElement('span');
+  count.dataset.flagCount = 'true';
+  count.className = 'chip-counter';
+
+  button.append(icon, label, count);
+  updateFlagButton(button, video);
+  return button;
+}
+
+function updateFlagButton(button, video) {
+  const hasFlags = (video.flags_count || 0) > 0;
+  button.classList.toggle('is-flagged', hasFlags);
+  const countElement = button.querySelector('[data-flag-count]');
+  if (countElement) {
+    countElement.textContent = (video.flags_count || 0).toLocaleString('hu-HU');
+  }
+}
+
+function updateVideoCardInteractions(article, video) {
+  const likeButton = article.querySelector('[data-like-button]');
+  if (likeButton) {
+    updateLikeButton(likeButton, video);
+  }
+  const flagButton = article.querySelector('[data-flag-button]');
+  if (flagButton) {
+    updateFlagButton(flagButton, video);
+  }
+}
+
+function updateVideoCardContent(article, video) {
+  const titleElement = article.querySelector('[data-video-title]');
+  if (titleElement) {
+    titleElement.textContent = video.title;
+  }
+  const descriptionElement = article.querySelector('[data-video-description]');
+  if (descriptionElement) {
+    descriptionElement.textContent = video.description || 'Nincs leírás';
+  }
+  const categoryElement = article.querySelector('[data-video-category]');
+  if (categoryElement) {
+    categoryElement.textContent = labelFor(video.category);
+  }
+  const dateElement = article.querySelector('[data-video-date]');
+  if (dateElement) {
+    dateElement.textContent = formatDate(video.created_at);
+  }
+  const placeElement = article.querySelector('[data-video-place]');
+  if (placeElement) {
+    if (video.place) {
+      placeElement.textContent = `• ${video.place}`;
+      placeElement.classList.remove('hidden');
+    } else {
+      placeElement.textContent = '';
+      placeElement.classList.add('hidden');
+    }
+  }
+  const viewsElement = article.querySelector('[data-video-views]');
+  if (viewsElement) {
+    viewsElement.textContent = `${(video.views || 0).toLocaleString('hu-HU')} megtekintés`;
+  }
+  updateVideoCardInteractions(article, video);
+}
+
+function updateVideoCard(videoId) {
+  const article = elements.list.querySelector(`[data-video-id="${videoId}"]`);
+  const video = videoCache.get(videoId);
+  if (!article || !video) return;
+  updateVideoCardContent(article, video);
+}
+
+function updateVideoData(videoId, updates) {
+  const existing = videoCache.get(videoId);
+  if (!existing) return null;
+  const updated = { ...existing, ...updates };
+  videoCache.set(videoId, updated);
+  state.videos = state.videos.map((item) => (item.id === videoId ? updated : item));
+  return updated;
+}
+
+function handleFlagClick(event, videoId) {
+  event.preventDefault();
+  event.stopPropagation();
+  openFlagModal(videoId);
+}
+
+function isVideoRateLimited(videoId) {
+  const last = interactionState.likeRateLimit.get(videoId) || 0;
+  return Date.now() - last < LIKE_RATE_LIMIT_MS;
+}
+
+function markRateLimit(videoId, button) {
+  interactionState.likeRateLimit.set(videoId, Date.now());
+  if (button instanceof HTMLElement) {
+    button.disabled = true;
+    window.setTimeout(() => {
+      button.disabled = false;
+    }, LIKE_RATE_LIMIT_MS);
+  }
+}
+
+async function handleLikeClick(event, videoId) {
+  event.preventDefault();
+  event.stopPropagation();
+
+  if (!supabase) {
+    updateStatus('Supabase konfiguráció hiányzik.', 'error');
+    return;
+  }
+
+  const button = event.currentTarget;
+
+  if (!authState.user) {
+    updateStatus('Like-oláshoz be kell jelentkezned.', 'error');
+    return;
+  }
+
+  if (isVideoRateLimited(videoId)) {
+    updateStatus('Kérjük, várj egy pillanatot a következő like előtt.');
+    return;
+  }
+
+  markRateLimit(videoId, button);
+
+  const current = videoCache.get(videoId);
+  if (!current) return;
+
+  const previousState = {
+    likes_count: current.likes_count || 0,
+    liked_by_user: Boolean(current.liked_by_user),
+  };
+
+  const wasLiked = authState.likedVideoIds.has(videoId);
+  const delta = wasLiked ? -1 : 1;
+  const optimisticLikes = Math.max(0, previousState.likes_count + delta);
+
+  if (wasLiked) {
+    authState.likedVideoIds.delete(videoId);
+  } else {
+    authState.likedVideoIds.add(videoId);
+  }
+
+  updateVideoData(videoId, {
+    likes_count: optimisticLikes,
+    liked_by_user: !wasLiked,
+  });
+  updateVideoCard(videoId);
+
+  try {
+    if (wasLiked) {
+      const { error } = await supabase
+        .from('video_likes')
+        .delete()
+        .eq('video_id', videoId)
+        .eq('user_id', authState.user.id);
+      if (error) throw error;
+    } else {
+      const { error } = await supabase
+        .from('video_likes')
+        .insert({ video_id: videoId, user_id: authState.user.id });
+      if (error) throw error;
+    }
+  } catch (error) {
+    console.error('Like toggle failed', error);
+    if (wasLiked) {
+      authState.likedVideoIds.add(videoId);
+    } else {
+      authState.likedVideoIds.delete(videoId);
+    }
+    updateVideoData(videoId, previousState);
+    updateVideoCard(videoId);
+    interactionState.likeRateLimit.set(videoId, Date.now() - LIKE_RATE_LIMIT_MS);
+    updateStatus('Nem sikerült frissíteni a like-ot. Próbáld újra.', 'error');
+  }
+}
+
 function renderVideoList(reset) {
   if (reset) {
     elements.list.innerHTML = '';
   }
   state.videos.forEach((video) => {
-    if (!elements.list.querySelector(`[data-video-id="${video.id}"]`)) {
+    const existing = elements.list.querySelector(`[data-video-id="${video.id}"]`);
+    if (existing) {
+      updateVideoCardContent(existing, video);
+    } else {
       elements.list.appendChild(createVideoCard(video));
     }
   });
@@ -676,6 +959,101 @@ async function openDetails(videoId) {
   await incrementViews(videoId);
 }
 
+function resetFlagModalState() {
+  if (elements.flagReason) {
+    elements.flagReason.value = '';
+  }
+  if (elements.flagError) {
+    elements.flagError.textContent = '';
+    elements.flagError.classList.add('hidden');
+  }
+  if (elements.flagSubmit) {
+    elements.flagSubmit.disabled = false;
+  }
+  interactionState.flagSubmitting = false;
+}
+
+function openFlagModal(videoId) {
+  if (!elements.flagModal) return;
+  resetFlagModalState();
+  flagState.currentVideoId = videoId;
+  elements.flagModal.showModal();
+}
+
+function closeFlagModal(event) {
+  event?.preventDefault();
+  if (elements.flagModal?.open) {
+    elements.flagModal.close();
+  }
+  flagState.currentVideoId = null;
+  resetFlagModalState();
+}
+
+async function handleFlagSubmit(event) {
+  event.preventDefault();
+  if (!supabase) {
+    updateStatus('Supabase konfiguráció hiányzik.', 'error');
+    return;
+  }
+  if (!flagState.currentVideoId) {
+    updateStatus('Nem sikerült azonosítani a jelentett videót.', 'error');
+    return;
+  }
+  if (interactionState.flagSubmitting) return;
+
+  const reason = elements.flagReason?.value.trim() || '';
+  if (reason.length < FLAG_MIN_REASON_LENGTH) {
+    if (elements.flagError) {
+      elements.flagError.textContent = `Kérjük, legalább ${FLAG_MIN_REASON_LENGTH} karakterben írd le a problémát.`;
+      elements.flagError.classList.remove('hidden');
+    }
+    return;
+  }
+
+  if (elements.flagError) {
+    elements.flagError.textContent = '';
+    elements.flagError.classList.add('hidden');
+  }
+
+  if (elements.flagSubmit) {
+    elements.flagSubmit.disabled = true;
+  }
+
+  interactionState.flagSubmitting = true;
+
+  const payload = {
+    video_id: flagState.currentVideoId,
+    reason,
+  };
+
+  if (authState.user) {
+    payload.user_id = authState.user.id;
+  }
+
+  try {
+    const { error } = await supabase.from('video_flags').insert(payload);
+    if (error) throw error;
+
+    const current = videoCache.get(flagState.currentVideoId);
+    const nextCount = (current?.flags_count || 0) + 1;
+    updateVideoData(flagState.currentVideoId, { flags_count: nextCount });
+    updateVideoCard(flagState.currentVideoId);
+    updateStatus('Köszönjük a jelzést, hamarosan megvizsgáljuk.', 'success');
+    closeFlagModal();
+  } catch (error) {
+    console.error('Flag submit failed', error);
+    if (elements.flagError) {
+      elements.flagError.textContent = 'Nem sikerült elküldeni a jelentést. Próbáld újra később.';
+      elements.flagError.classList.remove('hidden');
+    }
+  } finally {
+    interactionState.flagSubmitting = false;
+    if (elements.flagSubmit) {
+      elements.flagSubmit.disabled = false;
+    }
+  }
+}
+
 function buildVideoUrl(path) {
   if (!path) return '';
   if (path.startsWith('http')) return path;
@@ -693,12 +1071,68 @@ async function incrementViews(videoId) {
     return;
   }
   if (data) {
-    videoCache.set(videoId, data);
-    state.videos = state.videos.map((item) => (item.id === videoId ? data : item));
-    elements.detViews.textContent = `${(data.views || 0).toLocaleString('hu-HU')} megtekintés`;
-    renderVideoList(true);
+    const updated = updateVideoData(videoId, { views: data.views });
+    if (updated) {
+      elements.detViews.textContent = `${(updated.views || 0).toLocaleString('hu-HU')} megtekintés`;
+      updateVideoCard(videoId);
+    }
     renderTopList();
   }
+}
+
+function applyLikedStateToCollection() {
+  state.videos = state.videos.map((video) => {
+    const liked = authState.likedVideoIds.has(video.id);
+    const updated = { ...video, liked_by_user: liked };
+    videoCache.set(video.id, updated);
+    return updated;
+  });
+  state.videos.forEach((video) => updateVideoCard(video.id));
+}
+
+async function refreshLikedVideos() {
+  authState.likedVideoIds.clear();
+  if (!supabase || !authState.user) {
+    applyLikedStateToCollection();
+    return;
+  }
+  try {
+    const { data, error } = await supabase
+      .from('video_likes')
+      .select('video_id')
+      .eq('user_id', authState.user.id);
+    if (error) throw error;
+    (data ?? []).forEach((row) => {
+      if (row?.video_id) {
+        authState.likedVideoIds.add(row.video_id);
+      }
+    });
+  } catch (error) {
+    console.error('Liked videos load failed', error);
+  } finally {
+    applyLikedStateToCollection();
+  }
+}
+
+function updateAuthSession(session) {
+  authState.session = session;
+  authState.user = session?.user ?? null;
+  refreshLikedVideos().catch((error) => console.error('Liked videos refresh failed', error));
+}
+
+async function initAuth() {
+  if (!supabase?.auth) return;
+  try {
+    const { data, error } = await supabase.auth.getSession();
+    if (error) throw error;
+    updateAuthSession(data?.session ?? null);
+  } catch (error) {
+    console.error('Auth session fetch failed', error);
+  }
+
+  supabase.auth.onAuthStateChange((_event, session) => {
+    updateAuthSession(session);
+  });
 }
 
 function setupFilters() {
@@ -743,12 +1177,19 @@ function setupModals() {
     elements.detVideo.pause();
     elements.detVideo.removeAttribute('src');
   });
+  elements.closeFlag?.addEventListener('click', closeFlagModal);
+  elements.flagForm?.addEventListener('submit', handleFlagSubmit);
+  elements.flagModal?.addEventListener('close', () => {
+    flagState.currentVideoId = null;
+    resetFlagModalState();
+  });
 }
 
 async function init() {
   setupFilters();
   setupModals();
   handleDragEvents();
+  await initAuth();
   await fetchVideos(true);
   await renderTopList();
 }

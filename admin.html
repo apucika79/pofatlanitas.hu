@@ -41,6 +41,41 @@
     </section>
 
     <section id="adminPanel" class="space-y-4 hidden">
+      <div id="insightsSection" class="grid gap-4 lg:grid-cols-2">
+        <div class="bg-white border rounded-xl p-4 space-y-3">
+          <div>
+            <h2 class="text-base font-semibold">Aktivitási trendek</h2>
+            <p class="text-xs text-zinc-500">Az elmúlt 7 nap közösségi visszajelzései.</p>
+          </div>
+          <dl class="grid gap-3 sm:grid-cols-2">
+            <div class="rounded-lg bg-zinc-50 border px-3 py-2">
+              <dt class="text-xs text-zinc-500 uppercase tracking-wide">Like-ok (7 nap)</dt>
+              <dd id="likes7d" class="text-lg font-semibold">–</dd>
+            </div>
+            <div class="rounded-lg bg-zinc-50 border px-3 py-2">
+              <dt class="text-xs text-zinc-500 uppercase tracking-wide">Jelentések (7 nap)</dt>
+              <dd id="flags7d" class="text-lg font-semibold">–</dd>
+            </div>
+          </dl>
+        </div>
+        <div class="bg-white border rounded-xl p-4 space-y-3">
+          <div>
+            <h2 class="text-base font-semibold">Legaktívabb videók</h2>
+            <p class="text-xs text-zinc-500">Segít priorizálni a moderációs döntéseket.</p>
+          </div>
+          <div class="grid gap-4 sm:grid-cols-2">
+            <div>
+              <h3 class="text-sm font-semibold mb-2">Top like-ok</h3>
+              <ul id="topLikedVideos" class="space-y-1 text-xs text-zinc-600"></ul>
+            </div>
+            <div>
+              <h3 class="text-sm font-semibold mb-2">Top jelentések</h3>
+              <ul id="topFlaggedVideos" class="space-y-1 text-xs text-zinc-600"></ul>
+            </div>
+          </div>
+        </div>
+      </div>
+
       <div class="overflow-x-auto bg-white border rounded-xl">
         <table class="min-w-full text-sm">
           <thead class="bg-zinc-100 text-left">
@@ -48,6 +83,7 @@
               <th class="px-4 py-2">Cím</th>
               <th class="px-4 py-2">Kategória</th>
               <th class="px-4 py-2">Beküldve</th>
+              <th class="px-4 py-2">Jelentések</th>
               <th class="px-4 py-2">Fájl</th>
               <th class="px-4 py-2 text-right">Műveletek</th>
             </tr>
