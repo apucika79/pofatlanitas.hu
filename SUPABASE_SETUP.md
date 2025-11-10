@@ -30,7 +30,12 @@
    ```bash
    supabase storage create-bucket videos --public
    ```
-5. Futtasd a statikus frontend kiszolgálását (például):
+5. Deploy-old a feltöltés utáni feldolgozást végző Edge Functiont:
+   ```bash
+   supabase functions deploy process-video --project-ref "<project-ref>"
+   ```
+   - Fejlesztés közben futtasd lokálisan: `supabase functions serve process-video`
+6. Futtasd a statikus frontend kiszolgálását (például):
    ```bash
    npx serve .
    ```
@@ -53,6 +58,8 @@
    - `SUPABASE_SERVICE_ROLE_KEY`
    - `SUPABASE_AUTH_REDIRECT_URL`
    - (opcionálisan) `VIDEO_BUCKET`, ha eltér az alapértelmezettől.
+   - (opcionálisan) `VIDEO_MAX_FILE_SIZE` (byte-ban) és `UPLOAD_CHUNK_SIZE_MB` a nagy fájlok kezeléséhez.
+   - (opcionálisan) `TRANSCODE_WEBHOOK_URL`, ha külső transzkód szolgáltatást használsz.
 2. A build lépésben töltsd be a megfelelő `.env` fájlt (pl. staging deploy → `.env.staging`).
 3. A deploy pipeline elején futtasd le az adatbázis migrációkat a service role kulccsal:
    ```bash
@@ -70,3 +77,5 @@
 - [ ] Storage bucket publikus és elérhető.
 - [ ] Deploy pipeline futtatja a `supabase db push`-t a service role kulccsal.
 - [ ] Frontend deploy során a publikus kulcsok bekerülnek a környezetbe, a service role kulcs pedig csak a szerveroldali lépésekhez használatos.
+- [ ] Edge Function `process-video` deploy-olva és engedélyezve.
+- [ ] (Opcionális) Transzkód webhook URL beállítva és elérhető.

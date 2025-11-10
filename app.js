@@ -12,6 +12,11 @@ const state = {
   videos: [],
 };
 
+const uploadState = {
+  currentVideoId: null,
+  channel: null,
+};
+
 const elements = {
   list: document.getElementById('videoList'),
   top: document.getElementById('topList'),
@@ -36,6 +41,10 @@ const elements = {
   fileInput: document.getElementById('inpFile'),
   fileInfo: document.getElementById('fileInfo'),
   submitError: document.getElementById('submitError'),
+  uploadProgress: document.getElementById('uploadProgress'),
+  uploadProgressBar: document.getElementById('uploadProgressBar'),
+  uploadProgressPercent: document.getElementById('uploadProgressPercent'),
+  uploadProgressLabel: document.getElementById('uploadProgressLabel'),
   detailsModal: document.getElementById('detailsModal'),
   closeDetails: document.getElementById('closeDetails'),
   detVideo: document.getElementById('detVideo'),
@@ -48,6 +57,193 @@ const elements = {
 };
 
 const videoCache = new Map();
+
+const STATUS_MESSAGES = {
+  uploading: { message: 'Feltöltés folyamatban…', type: 'info' },
+  verifying: { message: 'Vírusellenőrzés folyamatban…', type: 'info' },
+  transcoding: { message: 'Transzkódálás folyamatban…', type: 'info' },
+  pending: { message: 'A videód feltöltve, moderációra vár.', type: 'info' },
+  approved: { message: 'A videód jóváhagyásra került! Köszönjük a beküldést.', type: 'success' },
+  rejected: { message: 'Sajnos a videót elutasítottuk. Ellenőrizd a szabályokat és próbáld újra.', type: 'error' },
+  failed: { message: 'A videó feldolgozása közben hiba történt.', type: 'error' },
+};
+
+const PROGRESS_MESSAGES = {
+  uploading: { label: 'Feltöltés folyamatban…', tone: 'info' },
+  verifying: { label: 'Vírusellenőrzés…', tone: 'info' },
+  transcoding: { label: 'Transzkódálás folyamatban…', tone: 'info' },
+  pending: { label: 'Moderációra vár…', tone: 'info' },
+  approved: { label: 'A videód jóváhagyva!', tone: 'success' },
+  rejected: { label: 'A videót elutasítottuk.', tone: 'error' },
+  failed: { label: 'A feldolgozás sikertelen.', tone: 'error' },
+};
+
+function applyProgressTone(tone) {
+  if (!elements.uploadProgressBar) return;
+  elements.uploadProgressBar.classList.remove('bg-black', 'bg-emerald-600', 'bg-red-500');
+  if (tone === 'success') {
+    elements.uploadProgressBar.classList.add('bg-emerald-600');
+  } else if (tone === 'error') {
+    elements.uploadProgressBar.classList.add('bg-red-500');
+  } else {
+    elements.uploadProgressBar.classList.add('bg-black');
+  }
+}
+
+function setUploadProgress({ visible = true, percent = 0, label = '', tone = 'info' } = {}) {
+  if (!elements.uploadProgress) return;
+  if (!visible) {
+    elements.uploadProgress.classList.add('hidden');
+    if (elements.uploadProgressBar) {
+      elements.uploadProgressBar.style.width = '0%';
+    }
+    if (elements.uploadProgressPercent) {
+      elements.uploadProgressPercent.textContent = '0%';
+    }
+    return;
+  }
+  elements.uploadProgress.classList.remove('hidden');
+  const capped = Math.min(Math.max(Math.round(percent), 0), 100);
+  if (elements.uploadProgressBar) {
+    elements.uploadProgressBar.style.width = `${capped}%`;
+  }
+  if (elements.uploadProgressPercent) {
+    elements.uploadProgressPercent.textContent = `${capped}%`;
+  }
+  if (elements.uploadProgressLabel && label) {
+    elements.uploadProgressLabel.textContent = label;
+  }
+  applyProgressTone(tone);
+}
+
+function resetUploadProgress() {
+  setUploadProgress({ visible: false, percent: 0, label: '', tone: 'info' });
+}
+
+function updateUploadProgressStatus(statusKey, overrides = {}) {
+  const config = PROGRESS_MESSAGES[statusKey] || {};
+  const tone = overrides.tone || config.tone || 'info';
+  const label = overrides.label || config.label || '';
+  const percent = typeof overrides.percent === 'number'
+    ? overrides.percent
+    : statusKey === 'uploading'
+      ? overrides.percent ?? 0
+      : 100;
+  setUploadProgress({ visible: true, percent, label, tone });
+}
+
+async function cleanupUploadSubscription() {
+  if (uploadState.channel && supabase) {
+    try {
+      await supabase.removeChannel(uploadState.channel);
+    } catch (error) {
+      console.error('Realtime cleanup failed', error);
+    }
+  }
+  uploadState.channel = null;
+  uploadState.currentVideoId = null;
+}
+
+async function subscribeToVideoStatus(videoId) {
+  if (!supabase || !videoId) return;
+  if (uploadState.currentVideoId === videoId && uploadState.channel) return;
+
+  await cleanupUploadSubscription();
+
+  const channel = supabase
+    .channel(`videos-status-${videoId}`)
+    .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'videos', filter: `id=eq.${videoId}` }, async (payload) => {
+      const status = payload?.new?.status;
+      if (!status) return;
+      updateStatus(status);
+      updateUploadProgressStatus(status);
+
+      if (status === 'approved') {
+        fetchVideos(true)
+          .then(() => updateStatus(status))
+          .catch((error) => console.error('Video list refresh error', error));
+        renderTopList().catch((error) => console.error('Top list refresh error', error));
+      }
+
+      if (['approved', 'rejected', 'failed'].includes(status)) {
+        await cleanupUploadSubscription();
+      }
+    });
+
+  try {
+    await channel.subscribe();
+    uploadState.channel = channel;
+    uploadState.currentVideoId = videoId;
+  } catch (error) {
+    console.error('Realtime subscribe error', error);
+  }
+}
+
+async function uploadFileMultipart(file, storagePath, onProgress) {
+  if (!supabase) {
+    throw new Error('Supabase nincs inicializálva.');
+  }
+
+  const storageClient = supabase.storage.from(APP_CONFIG.bucket);
+  const chunkSize = Math.max(APP_CONFIG.uploadChunkSize || 0, 5 * 1024 * 1024);
+
+  if (typeof storageClient.createMultipartUpload !== 'function') {
+    const { error } = await storageClient.upload(storagePath, file, {
+      contentType: file.type,
+      cacheControl: '3600',
+      upsert: false,
+    });
+    if (error) throw error;
+    onProgress?.(file.size, file.size);
+    return { path: storagePath };
+  }
+
+  const { data: createData, error: createError } = await storageClient.createMultipartUpload(storagePath, {
+    fileSize: file.size,
+    contentType: file.type,
+    cacheControl: '3600',
+    metadata: {
+      originalName: file.name,
+    },
+  });
+
+  if (createError || !createData?.id) {
+    throw createError || new Error('Nem sikerült inicializálni a multipart feltöltést.');
+  }
+
+  const uploadId = createData.id;
+  const parts = [];
+  let uploadedBytes = 0;
+
+  try {
+    let partNumber = 1;
+    for (let offset = 0; offset < file.size; offset += chunkSize, partNumber += 1) {
+      const chunk = file.slice(offset, Math.min(offset + chunkSize, file.size));
+      const { data: partData, error: partError } = await storageClient.uploadPart(uploadId, partNumber, chunk);
+      if (partError) {
+        throw partError;
+      }
+      parts.push({ partNumber, etag: partData?.etag });
+      uploadedBytes += chunk.size;
+      onProgress?.(uploadedBytes, file.size);
+    }
+
+    const { error: completeError } = await storageClient.completeMultipartUpload(uploadId, parts);
+    if (completeError) {
+      throw completeError;
+    }
+
+    onProgress?.(file.size, file.size);
+    return { uploadId };
+  } catch (error) {
+    try {
+      await storageClient.abortMultipartUpload(uploadId);
+    } catch (abortError) {
+      console.error('Multipart abort failed', abortError);
+    }
+    throw error;
+  }
+}
 
 function formatDate(value) {
   if (!value) return '';
@@ -63,19 +259,29 @@ function formatDate(value) {
   }
 }
 
-function updateStatus(message, type = 'info') {
+function updateStatus(messageOrStatus, type = 'info') {
   if (!elements.status) return;
+
+  let message = messageOrStatus;
+  let tone = type;
+
+  if (typeof messageOrStatus === 'string' && STATUS_MESSAGES[messageOrStatus]) {
+    message = STATUS_MESSAGES[messageOrStatus].message;
+    tone = STATUS_MESSAGES[messageOrStatus].type;
+  }
+
   if (!message) {
     elements.status.textContent = '';
     elements.status.classList.remove('text-red-500', 'text-emerald-600');
     elements.status.classList.add('text-zinc-500');
     return;
   }
+
   elements.status.textContent = message;
   elements.status.classList.remove('text-red-500', 'text-emerald-600', 'text-zinc-500');
-  if (type === 'error') {
+  if (tone === 'error') {
     elements.status.classList.add('text-red-500');
-  } else if (type === 'success') {
+  } else if (tone === 'success') {
     elements.status.classList.add('text-emerald-600');
   } else {
     elements.status.classList.add('text-zinc-500');
@@ -167,7 +373,7 @@ async function fetchVideos(reset = false) {
 
   if (!state.total) {
     updateStatus('Még nincs publikált videó. Küldd be az elsőt!');
-  } else {
+  } else if (!uploadState.currentVideoId) {
     updateStatus('');
   }
 
@@ -387,18 +593,19 @@ async function handleSubmit(event) {
     const videoId = crypto.randomUUID();
     const extension = '.mp4';
     const storagePath = `videos/${videoId}${extension}`;
+    await cleanupUploadSubscription();
+    resetUploadProgress();
+    updateUploadProgressStatus('uploading', { percent: 0, label: 'Feltöltés előkészítése…' });
+    updateStatus('uploading');
 
-    const { error: uploadError } = await supabase.storage
-      .from(APP_CONFIG.bucket)
-      .upload(storagePath, file, {
-        contentType: file.type,
-        cacheControl: '3600',
-        upsert: false,
-      });
+    await uploadFileMultipart(file, storagePath, (uploaded, total) => {
+      const percent = total ? Math.round((uploaded / total) * 100) : 0;
+      updateUploadProgressStatus('uploading', { percent });
+      updateStatus('uploading');
+    });
 
-    if (uploadError) {
-      throw uploadError;
-    }
+    updateUploadProgressStatus('verifying');
+    updateStatus('verifying');
 
     const { error: insertError } = await supabase.from('videos').insert({
       id: videoId,
@@ -406,7 +613,7 @@ async function handleSubmit(event) {
       description: description || null,
       place: place || null,
       category,
-      status: 'pending',
+      status: 'verifying',
       file_path: storagePath,
       thumb_path: null,
       reporter_email: reporterEmail || null,
@@ -416,11 +623,34 @@ async function handleSubmit(event) {
       throw insertError;
     }
 
-    updateStatus('Köszönjük! A videó moderáció után kerül ki a főoldalra.', 'success');
+    await subscribeToVideoStatus(videoId);
+
+    if (APP_CONFIG.processFunctionName) {
+      const { error: functionError } = await supabase.functions.invoke(APP_CONFIG.processFunctionName, {
+        body: {
+          videoId,
+          bucket: APP_CONFIG.bucket,
+          path: storagePath,
+          size: file.size,
+          mimeType: file.type,
+        },
+      });
+
+      if (functionError) {
+        throw functionError;
+      }
+    }
+
+    updateStatus('pending');
+    updateUploadProgressStatus('pending');
+
     resetForm();
     closeSubmitModal();
   } catch (error) {
     console.error('Upload error', error);
+    await cleanupUploadSubscription();
+    updateStatus('failed', 'error');
+    updateUploadProgressStatus('failed', { percent: 0 });
     elements.submitError.textContent = 'Nem sikerült feltölteni a videót. Próbáld újra később.';
     elements.submitError.classList.remove('hidden');
   } finally {

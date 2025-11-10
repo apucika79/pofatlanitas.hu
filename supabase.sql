@@ -9,7 +9,7 @@ create table if not exists public.users (
   created_at timestamptz not null default timezone('utc', now())
 );
 
-create type public.video_status as enum ('pending', 'approved', 'rejected');
+create type public.video_status as enum ('uploading', 'verifying', 'transcoding', 'pending', 'approved', 'rejected', 'failed');
 
 create table if not exists public.videos (
   id uuid primary key default gen_random_uuid(),
@@ -52,7 +52,7 @@ alter table public.video_flags enable row level security;
 
 create policy "Public can insert pending videos" on public.videos
   for insert to authenticated, anon
-  with check (status = 'pending');
+  with check (status in ('uploading', 'verifying', 'pending'));
 
 create policy "Public can view approved videos" on public.videos
   for select using (status = 'approved');
