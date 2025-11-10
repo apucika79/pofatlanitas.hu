@@ -50,6 +50,16 @@ const processFunctionName = runtimeEnv.SUPABASE_PROCESS_FUNCTION
   || importEnv.VITE_SUPABASE_PROCESS_FUNCTION
   || 'process-video';
 
+const usageFunctionName = runtimeEnv.SUPABASE_USAGE_FUNCTION
+  || runtimeEnv.VITE_SUPABASE_USAGE_FUNCTION
+  || importEnv.VITE_SUPABASE_USAGE_FUNCTION
+  || 'log-usage';
+
+const mapboxAccessToken = runtimeEnv.MAPBOX_ACCESS_TOKEN
+  || runtimeEnv.VITE_MAPBOX_ACCESS_TOKEN
+  || importEnv.VITE_MAPBOX_ACCESS_TOKEN
+  || '';
+
 export const APP_CONFIG = {
   supabaseUrl,
   supabaseAnonKey,
@@ -59,6 +69,8 @@ export const APP_CONFIG = {
   allowedMimeTypes: ['video/mp4'],
   uploadChunkSize,
   processFunctionName,
+  usageFunctionName,
+  mapboxAccessToken,
 };
 
 export const supabase = (supabaseUrl && supabaseAnonKey)

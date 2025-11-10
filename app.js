@@ -1,5 +1,12 @@
 // [ADD]
 import { supabase, APP_CONFIG } from './config.js';
+import {
+  logUsageEvent,
+  trackFeedRequest,
+  trackVideoOpen,
+  trackPreferenceUpdate,
+  trackSectionLoad,
+} from './analytics.js';
 
 const PAGE_SIZE = 12;
 const LIKE_RATE_LIMIT_MS = 1500;
@@ -14,6 +21,20 @@ const state = {
   videos: [],
 };
 
+const preferenceState = {
+  categories: new Set(),
+  routes: [],
+  home: null,
+  radius: 10,
+  loaded: false,
+};
+
+const sectionState = {
+  trending: [],
+  featured: [],
+  nearby: [],
+};
+
 const uploadState = {
   currentVideoId: null,
   channel: null,
@@ -21,7 +42,13 @@ const uploadState = {
 
 const elements = {
   list: document.getElementById('videoList'),
-  top: document.getElementById('topList'),
+  trending: document.getElementById('trendingList'),
+  featured: document.getElementById('featuredList'),
+  nearby: document.getElementById('nearbyList'),
+  nearbyHint: document.getElementById('nearbyHint'),
+  refreshNearby: document.getElementById('refreshNearby'),
+  toggleMap: document.getElementById('toggleMap'),
+  mapContainer: document.getElementById('mapContainer'),
   category: document.getElementById('filterCategory'),
   sort: document.getElementById('filterSort'),
   search: document.getElementById('searchText'),
@@ -33,6 +60,19 @@ const elements = {
   openSubmit: document.getElementById('openSubmit'),
   closeSubmit: document.getElementById('closeSubmit'),
   submitButton: document.getElementById('btnSubmit'),
+  openProfile: document.getElementById('openProfile'),
+  profileModal: document.getElementById('profileModal'),
+  closeProfile: document.getElementById('closeProfile'),
+  profileForm: document.getElementById('profileForm'),
+  profileInfo: document.getElementById('profileInfo'),
+  profileError: document.getElementById('profileError'),
+  profileSuccess: document.getElementById('profileSuccess'),
+  saveProfile: document.getElementById('saveProfile'),
+  prefCategories: document.getElementById('prefCategories'),
+  prefRoutes: document.getElementById('prefRoutes'),
+  prefLatitude: document.getElementById('prefLatitude'),
+  prefLongitude: document.getElementById('prefLongitude'),
+  prefRadius: document.getElementById('prefRadius'),
   title: document.getElementById('inpTitle'),
   description: document.getElementById('inpDesc'),
   place: document.getElementById('inpPlace'),
@@ -77,6 +117,14 @@ const interactionState = {
   flagSubmitting: false,
 };
 
+const mapState = {
+  instance: null,
+  ready: false,
+  visible: false,
+  markers: [],
+  pendingVideos: [],
+};
+
 const flagState = {
   currentVideoId: null,
 };
@@ -100,6 +148,431 @@ const PROGRESS_MESSAGES = {
   rejected: { label: 'A videót elutasítottuk.', tone: 'error' },
   failed: { label: 'A feldolgozás sikertelen.', tone: 'error' },
 };
+
+const ROUTE_SEPARATOR = /[,\n]/;
+
+function escapeIlike(value) {
+  return value.replace(/%/g, '\\%').replace(/_/g, '\\_');
+}
+
+function toNumber(value) {
+  if (value === null || value === undefined || value === '') return undefined;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+function hasLocationPreference() {
+  return Boolean(
+    preferenceState.home &&
+    typeof preferenceState.home.latitude === 'number' &&
+    typeof preferenceState.home.longitude === 'number',
+  );
+}
+
+function getHomeLocation() {
+  if (!hasLocationPreference()) return null;
+  return preferenceState.home;
+}
+
+function getFollowedCategories() {
+  return Array.from(preferenceState.categories);
+}
+
+function getFollowedRoutes() {
+  return preferenceState.routes.slice();
+}
+
+function currentUserId() {
+  return authState.user?.id ?? null;
+}
+
+function buildPreferenceFilters() {
+  return {
+    categories: getFollowedCategories(),
+    routes: getFollowedRoutes(),
+  };
+}
+
+function parseRoutesInput(value = '') {
+  return value
+    .split(ROUTE_SEPARATOR)
+    .map((entry) => entry.trim())
+    .filter((entry) => entry.length > 1);
+}
+
+function normalizeCoordinate(value) {
+  const num = toNumber(value);
+  if (num === undefined) return undefined;
+  if (num < -90 || num > 90) return undefined;
+  return Number(num.toFixed(6));
+}
+
+function normalizeLongitude(value) {
+  const num = toNumber(value);
+  if (num === undefined) return undefined;
+  if (num < -180 || num > 180) return undefined;
+  return Number(num.toFixed(6));
+}
+
+function normalizeRadius(value) {
+  const num = toNumber(value);
+  if (num === undefined || num <= 0) return undefined;
+  return Math.max(1, Math.min(100, Math.round(num)));
+}
+
+function updatePreferenceFormFields() {
+  if (!elements.profileModal) return;
+  const categories = getFollowedCategories();
+  elements.prefCategories?.querySelectorAll('input[type="checkbox"]').forEach((checkbox) => {
+    checkbox.checked = categories.includes(checkbox.value);
+  });
+  if (elements.prefRoutes) {
+    elements.prefRoutes.value = preferenceState.routes.join('\n');
+  }
+  if (elements.prefLatitude) {
+    elements.prefLatitude.value = preferenceState.home?.latitude ?? '';
+  }
+  if (elements.prefLongitude) {
+    elements.prefLongitude.value = preferenceState.home?.longitude ?? '';
+  }
+  if (elements.prefRadius) {
+    elements.prefRadius.value = preferenceState.radius ?? '';
+  }
+}
+
+function showProfileMessage(type, message) {
+  if (!elements.profileError || !elements.profileSuccess) return;
+  elements.profileError.classList.add('hidden');
+  elements.profileSuccess.classList.add('hidden');
+  elements.profileError.textContent = '';
+  elements.profileSuccess.textContent = '';
+  if (type === 'error') {
+    elements.profileError.textContent = message;
+    elements.profileError.classList.remove('hidden');
+  } else if (type === 'success') {
+    elements.profileSuccess.textContent = message;
+    elements.profileSuccess.classList.remove('hidden');
+  }
+}
+
+function updateNearbyHint(message = '', tone = 'info') {
+  if (!elements.nearbyHint) return;
+  elements.nearbyHint.textContent = message;
+  elements.nearbyHint.classList.toggle('text-red-500', tone === 'error');
+  elements.nearbyHint.classList.toggle('text-emerald-600', tone === 'success');
+}
+
+function upsertVideoCache(partial) {
+  if (!partial?.id) return null;
+  const existing = videoCache.get(partial.id) || {};
+  const merged = { ...existing, ...partial };
+  videoCache.set(partial.id, merged);
+  return merged;
+}
+
+function aggregateVideosForMap(collections = []) {
+  const map = new Map();
+  collections
+    .flat()
+    .filter((item) => item && typeof item.latitude === 'number' && typeof item.longitude === 'number')
+    .forEach((video) => {
+      if (!map.has(video.id)) {
+        map.set(video.id, video);
+      }
+    });
+  return Array.from(map.values());
+}
+
+function updateMapWithVideos(collections = []) {
+  mapState.pendingVideos = aggregateVideosForMap(collections);
+  if (mapState.visible) {
+    renderMapMarkers();
+  }
+}
+
+async function ensureMapbox() {
+  if (!APP_CONFIG.mapboxAccessToken) {
+    return null;
+  }
+  if (mapState.ready && window.mapboxgl) {
+    return window.mapboxgl;
+  }
+  await Promise.all([
+    new Promise((resolve) => {
+      if (document.getElementById('mapbox-style')) {
+        resolve();
+        return;
+      }
+      const link = document.createElement('link');
+      link.id = 'mapbox-style';
+      link.rel = 'stylesheet';
+      link.href = 'https://api.mapbox.com/mapbox-gl-js/v2.15.0/mapbox-gl.css';
+      link.onload = () => resolve();
+      link.onerror = () => resolve();
+      document.head.appendChild(link);
+    }),
+    new Promise((resolve) => {
+      if (window.mapboxgl) {
+        resolve();
+        return;
+      }
+      const script = document.createElement('script');
+      script.src = 'https://api.mapbox.com/mapbox-gl-js/v2.15.0/mapbox-gl.js';
+      script.async = true;
+      script.onload = () => resolve();
+      script.onerror = () => resolve();
+      document.head.appendChild(script);
+    }),
+  ]);
+  if (!window.mapboxgl) {
+    return null;
+  }
+  window.mapboxgl.accessToken = APP_CONFIG.mapboxAccessToken;
+  mapState.ready = true;
+  return window.mapboxgl;
+}
+
+function clearMapMarkers() {
+  mapState.markers.forEach((marker) => {
+    try {
+      marker.remove();
+    } catch (error) {
+      console.warn('Marker removal failed', error);
+    }
+  });
+  mapState.markers = [];
+}
+
+function renderMapMarkers() {
+  if (!mapState.instance || !window.mapboxgl) return;
+  clearMapMarkers();
+  const videos = mapState.pendingVideos;
+  if (!videos.length) {
+    return;
+  }
+  const bounds = new window.mapboxgl.LngLatBounds();
+  videos.forEach((video) => {
+    const marker = new window.mapboxgl.Marker({ color: '#000000' })
+      .setLngLat([video.longitude, video.latitude])
+      .setPopup(new window.mapboxgl.Popup({ offset: 24 }).setText(video.title || 'Videó'));
+    marker.addTo(mapState.instance);
+    mapState.markers.push(marker);
+    bounds.extend([video.longitude, video.latitude]);
+  });
+  if (videos.length > 1) {
+    mapState.instance.fitBounds(bounds, { padding: 48, maxZoom: 14, duration: 0 });
+  } else {
+    mapState.instance.setCenter([videos[0].longitude, videos[0].latitude]);
+    mapState.instance.setZoom(13);
+  }
+}
+
+async function showMap() {
+  if (!elements.mapContainer) return;
+  const mapbox = await ensureMapbox();
+  if (!mapbox) {
+    elements.mapContainer.textContent = 'Mapbox API kulcs hiányzik vagy a térkép nem tölthető be.';
+    return;
+  }
+  elements.mapContainer.classList.remove('hidden');
+  elements.mapContainer.classList.add('map-visible');
+  mapState.visible = true;
+  if (!mapState.instance) {
+    mapState.instance = new mapbox.Map({
+      container: elements.mapContainer,
+      style: 'mapbox://styles/mapbox/streets-v12',
+      center: getHomeLocation()
+        ? [getHomeLocation().longitude, getHomeLocation().latitude]
+        : [19.0402, 47.4979],
+      zoom: hasLocationPreference() ? 10 : 6,
+    });
+    mapState.instance.addControl(new mapbox.NavigationControl());
+    mapState.instance.on('load', () => {
+      renderMapMarkers();
+    });
+  } else {
+    renderMapMarkers();
+  }
+  if (elements.toggleMap) {
+    elements.toggleMap.textContent = 'Bezárás';
+  }
+}
+
+function hideMap() {
+  if (!elements.mapContainer) return;
+  elements.mapContainer.classList.add('hidden');
+  elements.mapContainer.classList.remove('map-visible');
+  mapState.visible = false;
+  if (elements.toggleMap) {
+    elements.toggleMap.textContent = 'Megnyitás';
+  }
+}
+
+async function toggleMapVisibility() {
+  if (mapState.visible) {
+    hideMap();
+  } else {
+    await showMap();
+  }
+  logUsageEvent('map.state', { visible: mapState.visible, marker_count: mapState.pendingVideos.length, user_id: currentUserId() });
+}
+
+function resetPreferenceState() {
+  preferenceState.categories = new Set();
+  preferenceState.routes = [];
+  preferenceState.home = null;
+  preferenceState.radius = 10;
+  preferenceState.loaded = false;
+}
+
+function applyPreferenceData(data) {
+  const categories = Array.isArray(data?.followed_categories) ? data.followed_categories : [];
+  preferenceState.categories = new Set(categories);
+  const routes = Array.isArray(data?.followed_routes) ? data.followed_routes : [];
+  preferenceState.routes = routes.filter((route) => typeof route === 'string' && route.trim().length > 1);
+  const latitude = toNumber(data?.home_latitude);
+  const longitude = toNumber(data?.home_longitude);
+  if (typeof latitude === 'number' && typeof longitude === 'number') {
+    preferenceState.home = { latitude, longitude };
+  } else {
+    preferenceState.home = null;
+  }
+  const radius = normalizeRadius(data?.nearby_radius_km);
+  if (radius !== undefined) {
+    preferenceState.radius = radius;
+  }
+  preferenceState.loaded = true;
+  updatePreferenceFormFields();
+}
+
+function setProfileFormEnabled(enabled) {
+  if (!elements.profileForm) return;
+  elements.profileForm.querySelectorAll('input, textarea, button').forEach((el) => {
+    if (el.id === 'closeProfile') return;
+    if (el.id === 'saveProfile') {
+      el.disabled = !enabled;
+      return;
+    }
+    el.disabled = !enabled;
+  });
+}
+
+async function loadUserPreferences() {
+  preferenceState.loaded = false;
+  if (!supabase || !authState.user) {
+    resetPreferenceState();
+    updatePreferenceFormFields();
+    if (elements.profileInfo) {
+      elements.profileInfo.textContent = 'Jelentkezz be a személyre szabott feed beállításához.';
+    }
+    setProfileFormEnabled(false);
+    updateNearbyHint('Add meg a profilban a koordinátáidat, hogy közeli videókat mutassunk.');
+    updateMapWithVideos([state.videos, sectionState.nearby, sectionState.trending, sectionState.featured]);
+    preferenceState.loaded = true;
+    return;
+  }
+  try {
+    const { data, error } = await supabase
+      .from('user_feed_preferences')
+      .select('*')
+      .eq('user_id', authState.user.id)
+      .maybeSingle();
+    if (error) throw error;
+    applyPreferenceData(data || {});
+    if (elements.profileInfo) {
+      elements.profileInfo.textContent = 'A kiválasztott beállítások alapján testreszabjuk a feedet és a közeli ajánlásokat.';
+    }
+    setProfileFormEnabled(true);
+  } catch (error) {
+    console.error('Preferences load failed', error);
+    resetPreferenceState();
+    updatePreferenceFormFields();
+    showProfileMessage('error', 'Nem sikerült betölteni a beállításokat.');
+    setProfileFormEnabled(true);
+  } finally {
+    preferenceState.loaded = true;
+    updateNearbyHint(hasLocationPreference()
+      ? 'A közeli videók az általad megadott koordináták alapján jelennek meg.'
+      : 'Add meg a koordinátáidat a profil beállításokban a közeli videókhoz.');
+    updateMapWithVideos([state.videos, sectionState.nearby, sectionState.trending, sectionState.featured]);
+  }
+}
+
+async function saveUserPreferences(event) {
+  event?.preventDefault();
+  if (!supabase || !authState.user) {
+    showProfileMessage('error', 'Bejelentkezés szükséges a mentéshez.');
+    return;
+  }
+  const selectedCategories = [];
+  elements.prefCategories?.querySelectorAll('input[type="checkbox"]').forEach((checkbox) => {
+    if (checkbox.checked) {
+      selectedCategories.push(checkbox.value);
+    }
+  });
+  const routes = parseRoutesInput(elements.prefRoutes?.value || '');
+  const latitude = normalizeCoordinate(elements.prefLatitude?.value);
+  const longitude = normalizeLongitude(elements.prefLongitude?.value);
+  const radius = normalizeRadius(elements.prefRadius?.value);
+
+  if ((latitude !== undefined && longitude === undefined) || (latitude === undefined && longitude !== undefined)) {
+    showProfileMessage('error', 'Mindkét koordinátát add meg a közeli ajánlásokhoz.');
+    return;
+  }
+
+  const payload = {
+    user_id: authState.user.id,
+    followed_categories: selectedCategories,
+    followed_routes: routes,
+    home_latitude: latitude ?? null,
+    home_longitude: longitude ?? null,
+    nearby_radius_km: radius ?? preferenceState.radius,
+  };
+
+  try {
+    if (elements.saveProfile) {
+      elements.saveProfile.disabled = true;
+    }
+    const { error } = await supabase.from('user_feed_preferences').upsert(payload, { onConflict: 'user_id' });
+    if (error) throw error;
+    applyPreferenceData(payload);
+    showProfileMessage('success', 'Beállítások elmentve.');
+    trackPreferenceUpdate({
+      categories: selectedCategories.length,
+      routes: routes.length,
+      has_location: latitude !== undefined && longitude !== undefined,
+      radius_km: payload.nearby_radius_km,
+      user_id: currentUserId(),
+    });
+    await Promise.all([
+      fetchVideos(true),
+      loadNearbyVideos(),
+      loadTrendingVideos(),
+      loadFeaturedVideos(),
+    ]);
+  } catch (error) {
+    console.error('Preferences save failed', error);
+    showProfileMessage('error', 'Nem sikerült menteni a beállításokat. Próbáld újra.');
+  } finally {
+    if (elements.saveProfile) {
+      elements.saveProfile.disabled = false;
+    }
+  }
+}
+
+function openProfileModal() {
+  if (!elements.profileModal) return;
+  updatePreferenceFormFields();
+  elements.profileModal.showModal();
+  showProfileMessage('info', '');
+}
+
+function closeProfileModal(event) {
+  event?.preventDefault();
+  if (elements.profileModal?.open) {
+    elements.profileModal.close();
+  }
+}
 
 function extractAggregateCount(value) {
   if (Array.isArray(value) && value.length) {
@@ -195,7 +668,9 @@ async function subscribeToVideoStatus(videoId) {
         fetchVideos(true)
           .then(() => updateStatus(status))
           .catch((error) => console.error('Video list refresh error', error));
-        renderTopList().catch((error) => console.error('Top list refresh error', error));
+        loadTrendingVideos().catch((error) => console.error('Trending refresh error', error));
+        loadFeaturedVideos().catch((error) => console.error('Featured refresh error', error));
+        loadNearbyVideos().catch((error) => console.error('Nearby refresh error', error));
       }
 
       if (['approved', 'rejected', 'failed'].includes(status)) {
@@ -377,18 +852,36 @@ async function fetchVideos(reset = false) {
 
   let query = supabase
     .from('videos')
-    .select('id, title, description, place, category, status, file_path, thumb_path, views, created_at, video_likes(count), video_flags(count)', { count: 'exact' })
+    .select('id, title, description, place, category, status, file_path, thumb_path, views, latitude, longitude, is_featured, created_at, video_likes(count), video_flags(count)', { count: 'exact' })
     .eq('status', 'approved');
 
   if (state.category) {
     query = query.eq('category', state.category);
   }
 
+  const preferenceFilters = buildPreferenceFilters();
+  const orConditions = [];
+
   if (state.q.trim()) {
-    const term = state.q.trim();
-    query = query.or(
-      `title.ilike.%${term}%,description.ilike.%${term}%,place.ilike.%${term}%`
-    );
+    const term = escapeIlike(state.q.trim());
+    orConditions.push(`title.ilike.%${term}%`);
+    orConditions.push(`description.ilike.%${term}%`);
+    orConditions.push(`place.ilike.%${term}%`);
+  }
+
+  if (!state.category && preferenceFilters.categories.length) {
+    query = query.in('category', preferenceFilters.categories);
+  }
+
+  if (!state.q.trim() && preferenceFilters.routes.length) {
+    preferenceFilters.routes.forEach((route) => {
+      const escaped = escapeIlike(route);
+      orConditions.push(`place.ilike.%${escaped}%`);
+    });
+  }
+
+  if (orConditions.length) {
+    query = query.or(orConditions.join(','));
   }
 
   query = query.order(state.sort, { ascending: false, nullsFirst: false }).range(from, to);
@@ -403,23 +896,32 @@ async function fetchVideos(reset = false) {
     elements.loadMore.disabled = false;
     elements.loadMore.classList.remove('opacity-50');
     elements.loadMore.textContent = 'További videók';
+    logUsageEvent('feed.fetch_failed', {
+      category: state.category || null,
+      sort: state.sort,
+      search: state.q || null,
+      page: state.page,
+      user_id: currentUserId(),
+    });
     return;
   }
 
   state.total = typeof count === 'number' ? count : state.total;
   updateCounter();
 
-  const processedData = (data ?? []).map(transformVideoRecord).filter(Boolean);
+  const processedData = (data ?? []).map((raw) => {
+    const transformed = transformVideoRecord(raw);
+    if (transformed) {
+      upsertVideoCache(transformed);
+    }
+    return transformed;
+  }).filter(Boolean);
 
   if (reset) {
     state.videos = processedData;
   } else {
     state.videos = state.videos.concat(processedData);
   }
-
-  processedData.forEach((video) => {
-    videoCache.set(video.id, video);
-  });
 
   if (!state.total) {
     updateStatus('Még nincs publikált videó. Küldd be az elsőt!');
@@ -429,6 +931,20 @@ async function fetchVideos(reset = false) {
 
   renderVideoList(reset);
   updateLoadMoreButton();
+  updateMapWithVideos([state.videos, sectionState.nearby, sectionState.trending, sectionState.featured]);
+  trackFeedRequest({
+    category: state.category || null,
+    sort: state.sort,
+    search: state.q || null,
+    page: state.page,
+    page_size: PAGE_SIZE,
+    result_count: processedData.length,
+    total: state.total,
+    preference_categories: preferenceFilters.categories.length,
+    preference_routes: preferenceFilters.routes.length,
+    has_location: hasLocationPreference(),
+    user_id: currentUserId(),
+  });
 }
 
 function updateLoadMoreButton() {
@@ -700,7 +1216,10 @@ async function handleLikeClick(event, videoId) {
     updateVideoCard(videoId);
     interactionState.likeRateLimit.set(videoId, Date.now() - LIKE_RATE_LIMIT_MS);
     updateStatus('Nem sikerült frissíteni a like-ot. Próbáld újra.', 'error');
+    logUsageEvent('video.like_failed', { video_id: videoId, user_id: currentUserId() });
   }
+  const nowLiked = authState.likedVideoIds.has(videoId);
+  logUsageEvent('video.like', { video_id: videoId, liked: nowLiked, user_id: currentUserId() });
 }
 
 function renderVideoList(reset) {
@@ -717,25 +1236,117 @@ function renderVideoList(reset) {
   });
 }
 
-async function renderTopList() {
-  if (!supabase) return;
-  const { data, error } = await supabase
-    .from('videos')
-    .select('id, title, views')
-    .eq('status', 'approved')
-    .order('views', { ascending: false })
-    .limit(5);
-  if (error) {
-    console.error('Top list error', error);
+function renderSectionList(target, videos, { formatter } = {}) {
+  if (!target) return;
+  target.innerHTML = '';
+  if (!videos.length) {
+    const li = document.createElement('li');
+    li.className = 'text-xs text-zinc-500';
+    li.textContent = 'Nincs elérhető videó.';
+    target.appendChild(li);
     return;
   }
-  elements.top.innerHTML = '';
-  (data ?? []).forEach((video) => {
+  videos.forEach((video) => {
     const li = document.createElement('li');
-    li.innerHTML = `<button class="underline-offset-2 hover:underline" data-top-video="${video.id}">${escapeHtml(video.title)}</button> – ${(video.views || 0).toLocaleString('hu-HU')}`;
+    li.innerHTML = `<button class="underline-offset-2 hover:underline" data-section-video="${video.id}">${escapeHtml(video.title)}</button>${formatter ? formatter(video) : ''}`;
     li.querySelector('button').addEventListener('click', () => openDetails(video.id));
-    elements.top.appendChild(li);
+    target.appendChild(li);
   });
+}
+
+function renderTrendingList() {
+  renderSectionList(elements.trending, sectionState.trending, {
+    formatter: (video) => ` – ${(video.like_count || 0).toLocaleString('hu-HU')} kedvelés`,
+  });
+}
+
+function renderFeaturedList() {
+  renderSectionList(elements.featured, sectionState.featured, {
+    formatter: (video) => (video.place ? ` – ${escapeHtml(video.place)}` : ''),
+  });
+}
+
+function renderNearbyList() {
+  renderSectionList(elements.nearby, sectionState.nearby, {
+    formatter: (video) => ` – ${video.distance_km?.toLocaleString('hu-HU', { maximumFractionDigits: 1 }) ?? '?'} km`,
+  });
+}
+
+async function loadTrendingVideos() {
+  if (!supabase) return;
+  try {
+    const { data, error } = await supabase.rpc('get_trending_videos', { limit_count: 5 });
+    if (error) throw error;
+    sectionState.trending = (data ?? []).map((item) => {
+      const merged = upsertVideoCache(item);
+      return merged || item;
+    });
+    renderTrendingList();
+    trackSectionLoad('trending', { count: sectionState.trending.length, user_id: currentUserId() });
+    updateMapWithVideos([state.videos, sectionState.nearby, sectionState.trending, sectionState.featured]);
+  } catch (error) {
+    console.error('Trending load failed', error);
+    logUsageEvent('trending.failed', { user_id: currentUserId() });
+  }
+}
+
+async function loadFeaturedVideos() {
+  if (!supabase) return;
+  try {
+    const { data, error } = await supabase.rpc('get_featured_videos', { limit_count: 5 });
+    if (error) throw error;
+    sectionState.featured = (data ?? []).map((item) => {
+      const merged = upsertVideoCache(item);
+      return merged || item;
+    });
+    renderFeaturedList();
+    trackSectionLoad('featured', { count: sectionState.featured.length, user_id: currentUserId() });
+    updateMapWithVideos([state.videos, sectionState.nearby, sectionState.trending, sectionState.featured]);
+  } catch (error) {
+    console.error('Featured load failed', error);
+    logUsageEvent('featured.failed', { user_id: currentUserId() });
+  }
+}
+
+async function loadNearbyVideos() {
+  if (!supabase) return;
+  const home = getHomeLocation();
+  if (!home) {
+    sectionState.nearby = [];
+    renderNearbyList();
+    updateNearbyHint('Adj meg koordinátákat a profilodban a közeli videókért.', 'info');
+    trackSectionLoad('nearby', { count: 0, reason: 'no_location', user_id: currentUserId() });
+    updateMapWithVideos([state.videos, sectionState.nearby, sectionState.trending, sectionState.featured]);
+    return;
+  }
+  try {
+    const { data, error } = await supabase.rpc('get_nearby_videos', {
+      lat: home.latitude,
+      lon: home.longitude,
+      radius_km: preferenceState.radius ?? 10,
+      limit_count: 5,
+    });
+    if (error) throw error;
+    sectionState.nearby = (data ?? []).map((item) => {
+      const normalized = {
+        ...item,
+        distance_km: item?.distance_km !== null && item?.distance_km !== undefined
+          ? Number(item.distance_km)
+          : null,
+      };
+      const merged = upsertVideoCache(normalized);
+      return merged || normalized;
+    });
+    renderNearbyList();
+    updateNearbyHint(`A sugár: ${preferenceState.radius} km.`, 'success');
+    trackSectionLoad('nearby', { count: sectionState.nearby.length, radius_km: preferenceState.radius, user_id: currentUserId() });
+    updateMapWithVideos([state.videos, sectionState.nearby, sectionState.trending, sectionState.featured]);
+  } catch (error) {
+    console.error('Nearby load failed', error);
+    updateNearbyHint('Nem sikerült betölteni a közeli videókat.', 'error');
+    updateMapWithVideos([state.videos, sectionState.nearby, sectionState.trending, sectionState.featured]);
+    logUsageEvent('nearby.failed', { user_id: currentUserId() });
+  }
 }
 
 function openSubmitModal() {
@@ -929,6 +1540,12 @@ async function handleSubmit(event) {
 
     resetForm();
     closeSubmitModal();
+    logUsageEvent('video.submitted', {
+      category,
+      has_location: Boolean(place),
+      file_size_mb: Number((file.size / (1024 * 1024)).toFixed(2)),
+      user_id: currentUserId(),
+    });
   } catch (error) {
     console.error('Upload error', error);
     await cleanupUploadSubscription();
@@ -942,8 +1559,32 @@ async function handleSubmit(event) {
   }
 }
 
+async function fetchVideoById(videoId) {
+  if (!supabase) return null;
+  try {
+    const { data, error } = await supabase
+      .from('videos')
+      .select('id, title, description, place, category, status, file_path, thumb_path, views, latitude, longitude, is_featured, created_at, video_likes(count), video_flags(count)')
+      .eq('id', videoId)
+      .eq('status', 'approved')
+      .maybeSingle();
+    if (error) throw error;
+    const transformed = transformVideoRecord(data);
+    if (transformed) {
+      return upsertVideoCache(transformed);
+    }
+    return null;
+  } catch (error) {
+    console.error('Video fetch failed', error);
+    return null;
+  }
+}
+
 async function openDetails(videoId) {
-  const video = videoCache.get(videoId);
+  let video = videoCache.get(videoId);
+  if (!video) {
+    video = await fetchVideoById(videoId);
+  }
   if (!video) return;
   elements.detTitle.textContent = video.title;
   elements.detDesc.textContent = video.description || 'Nincs leírás megadva.';
@@ -956,6 +1597,7 @@ async function openDetails(videoId) {
 
   elements.detailsModal.showModal();
 
+  trackVideoOpen({ video_id: videoId, category: video.category, user_id: currentUserId() });
   await incrementViews(videoId);
 }
 
@@ -1039,6 +1681,7 @@ async function handleFlagSubmit(event) {
     updateVideoData(flagState.currentVideoId, { flags_count: nextCount });
     updateVideoCard(flagState.currentVideoId);
     updateStatus('Köszönjük a jelzést, hamarosan megvizsgáljuk.', 'success');
+    logUsageEvent('video.flagged', { video_id: flagState.currentVideoId, user_id: currentUserId() });
     closeFlagModal();
   } catch (error) {
     console.error('Flag submit failed', error);
@@ -1076,7 +1719,7 @@ async function incrementViews(videoId) {
       elements.detViews.textContent = `${(updated.views || 0).toLocaleString('hu-HU')} megtekintés`;
       updateVideoCard(videoId);
     }
-    renderTopList();
+    loadTrendingVideos();
   }
 }
 
@@ -1126,12 +1769,15 @@ async function initAuth() {
     const { data, error } = await supabase.auth.getSession();
     if (error) throw error;
     updateAuthSession(data?.session ?? null);
+    await loadUserPreferences();
   } catch (error) {
     console.error('Auth session fetch failed', error);
+    await loadUserPreferences();
   }
 
   supabase.auth.onAuthStateChange((_event, session) => {
     updateAuthSession(session);
+    loadUserPreferences().catch((prefError) => console.error('Preferences refresh failed', prefError));
   });
 }
 
@@ -1140,16 +1786,19 @@ function setupFilters() {
     state.category = elements.category.value;
     state.page = 1;
     fetchVideos(true);
+    logUsageEvent('filter.category', { value: state.category || null, user_id: currentUserId() });
   });
   elements.sort.addEventListener('change', () => {
     state.sort = elements.sort.value;
     state.page = 1;
     fetchVideos(true);
+    logUsageEvent('filter.sort', { value: state.sort, user_id: currentUserId() });
   });
   elements.search.addEventListener('input', () => {
     state.q = elements.search.value;
     state.page = 1;
     fetchVideos(true);
+    logUsageEvent('filter.search', { value: state.q, user_id: currentUserId() });
   });
   elements.clear.addEventListener('click', () => {
     state.category = '';
@@ -1159,11 +1808,13 @@ function setupFilters() {
     elements.sort.value = 'created_at';
     elements.search.value = '';
     fetchVideos(true);
+    logUsageEvent('filter.clear', { user_id: currentUserId() });
   });
   elements.loadMore.addEventListener('click', () => {
     if (state.loading) return;
     state.page += 1;
     fetchVideos(false);
+    logUsageEvent('feed.load_more', { page: state.page, user_id: currentUserId() });
   });
 }
 
@@ -1185,13 +1836,43 @@ function setupModals() {
   });
 }
 
+function setupProfileControls() {
+  elements.openProfile?.addEventListener('click', (event) => {
+    event.preventDefault();
+    openProfileModal();
+    logUsageEvent('profile.open', { user_id: currentUserId() });
+  });
+  elements.closeProfile?.addEventListener('click', (event) => {
+    closeProfileModal(event);
+    logUsageEvent('profile.close', { user_id: currentUserId() });
+  });
+  elements.profileForm?.addEventListener('submit', saveUserPreferences);
+  elements.profileModal?.addEventListener('close', () => {
+    showProfileMessage('info', '');
+  });
+  elements.refreshNearby?.addEventListener('click', (event) => {
+    event.preventDefault();
+    loadNearbyVideos();
+    logUsageEvent('nearby.refresh', { user_id: currentUserId() });
+  });
+  elements.toggleMap?.addEventListener('click', (event) => {
+    event.preventDefault();
+    void toggleMapVisibility();
+  });
+}
+
 async function init() {
   setupFilters();
   setupModals();
+  setupProfileControls();
   handleDragEvents();
+  renderTrendingList();
+  renderFeaturedList();
+  renderNearbyList();
   await initAuth();
   await fetchVideos(true);
-  await renderTopList();
+  await Promise.all([loadTrendingVideos(), loadFeaturedVideos()]);
+  await loadNearbyVideos();
 }
 
 init().catch((error) => {

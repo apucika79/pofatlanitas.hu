@@ -25,6 +25,9 @@
         <button id="openSubmit" class="px-3 py-2 rounded-lg border bg-black text-white text-sm hover:opacity-90">
           Beküldés
         </button>
+        <button id="openProfile" class="px-3 py-2 rounded-lg border text-sm hover:bg-zinc-50">
+          Profil
+        </button>
       </nav>
     </div>
   </header>
@@ -75,8 +78,27 @@
 
     <aside class="space-y-4">
       <div class="bg-white border rounded-xl p-4">
-        <h3 class="font-semibold mb-3">Top videók</h3>
-        <ol id="topList" class="list-decimal list-inside space-y-2 text-sm"></ol>
+        <h3 class="font-semibold mb-3">Trending</h3>
+        <ol id="trendingList" class="list-decimal list-inside space-y-2 text-sm"></ol>
+      </div>
+      <div class="bg-white border rounded-xl p-4 space-y-3">
+        <div class="flex items-center justify-between">
+          <h3 class="font-semibold">Közeli videók</h3>
+          <button id="refreshNearby" class="text-xs px-2 py-1 border rounded-lg hover:bg-zinc-50">Frissítés</button>
+        </div>
+        <p id="nearbyHint" class="text-xs text-zinc-500"></p>
+        <ol id="nearbyList" class="list-decimal list-inside space-y-2 text-sm"></ol>
+      </div>
+      <div class="bg-white border rounded-xl p-4">
+        <h3 class="font-semibold mb-3">Kiemelt videók</h3>
+        <ol id="featuredList" class="list-decimal list-inside space-y-2 text-sm"></ol>
+      </div>
+      <div class="bg-white border rounded-xl">
+        <div class="flex items-center justify-between p-4 border-b">
+          <h3 class="font-semibold">Térkép</h3>
+          <button id="toggleMap" class="text-xs px-2 py-1 border rounded-lg hover:bg-zinc-50">Megnyitás</button>
+        </div>
+        <div id="mapContainer" class="hidden h-72"></div>
       </div>
       <div class="bg-white border rounded-xl p-4">
         <h3 class="font-semibold mb-2">Jogi megjegyzés</h3>
@@ -173,6 +195,53 @@
           <span id="detPlace"></span>
         </div>
         <!-- // [END] -->
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="profileModal" class="rounded-xl p-0 w-[95vw] max-w-xl">
+    <form id="profileForm" class="bg-white rounded-xl border">
+      <div class="p-4 border-b flex items-center justify-between">
+        <div class="font-semibold">Profil beállítások</div>
+        <button id="closeProfile" type="button" class="text-sm px-2 py-1 border rounded-lg">Bezár</button>
+      </div>
+      <div class="p-4 space-y-4 text-sm">
+        <p id="profileInfo" class="text-xs text-zinc-500"></p>
+        <fieldset class="space-y-2">
+          <legend class="font-medium">Kedvenc kategóriák</legend>
+          <p class="text-xs text-zinc-500">Válaszd ki, mely kategóriákat részesíted előnyben. Ha üres, az összes megjelenik.</p>
+          <div class="grid grid-cols-2 gap-2" id="prefCategories">
+            <label class="flex items-center gap-2 text-xs"><input type="checkbox" value="keresztezodes" /> Kereszteződés</label>
+            <label class="flex items-center gap-2 text-xs"><input type="checkbox" value="buszsav" /> Buszsáv</label>
+            <label class="flex items-center gap-2 text-xs"><input type="checkbox" value="palyaszakasz" /> Pályaszakasz</label>
+            <label class="flex items-center gap-2 text-xs"><input type="checkbox" value="gyalogatkelo" /> Gyalogátkelő</label>
+            <label class="flex items-center gap-2 text-xs"><input type="checkbox" value="parkolas" /> Parkolás</label>
+          </div>
+        </fieldset>
+        <div class="space-y-1">
+          <label class="font-medium" for="prefRoutes">Kedvenc útvonalak</label>
+          <textarea id="prefRoutes" class="w-full border rounded-lg px-3 py-2" rows="3" placeholder="Útvonalanként külön sor (pl. M3 bevezető, Rákóczi út)"></textarea>
+          <p class="text-xs text-zinc-500">Ezek alapján priorizáljuk a feedet, ha a helyszín illeszkedik.</p>
+        </div>
+        <div class="grid gap-3 md:grid-cols-2">
+          <div class="space-y-1">
+            <label class="font-medium" for="prefLatitude">Otthoni szélességi fok</label>
+            <input id="prefLatitude" type="number" step="0.0001" class="w-full border rounded-lg px-3 py-2" placeholder="47.4979" />
+          </div>
+          <div class="space-y-1">
+            <label class="font-medium" for="prefLongitude">Otthoni hosszúsági fok</label>
+            <input id="prefLongitude" type="number" step="0.0001" class="w-full border rounded-lg px-3 py-2" placeholder="19.0402" />
+          </div>
+        </div>
+        <div class="space-y-1">
+          <label class="font-medium" for="prefRadius">Közeli videók sugara (km)</label>
+          <input id="prefRadius" type="number" min="1" max="100" step="1" class="w-full border rounded-lg px-3 py-2" placeholder="10" />
+        </div>
+        <p id="profileError" class="hidden text-xs text-red-500"></p>
+        <p id="profileSuccess" class="hidden text-xs text-emerald-600"></p>
+      </div>
+      <div class="p-4 border-t flex items-center justify-end gap-2">
+        <button type="submit" id="saveProfile" class="px-3 py-2 rounded-lg bg-black text-white text-sm">Beállítások mentése</button>
       </div>
     </form>
   </dialog>
