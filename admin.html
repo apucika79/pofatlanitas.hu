@@ -15,29 +15,47 @@
     <div class="max-w-6xl mx-auto px-4 py-4 flex flex-wrap items-center justify-between gap-3">
       <div>
         <h1 class="text-xl font-semibold">Moderációs felület</h1>
-        <p class="text-sm text-zinc-500">Csak a függőben lévő videók látszanak. ADMIN_MODE = true esetén érhető el a működés.</p>
+        <p class="text-sm text-zinc-500">Csak bejelentkezett admin felhasználók férhetnek hozzá.</p>
       </div>
-      <a href="./index.html" class="text-sm underline">Vissza a főoldalra</a>
+      <div class="flex items-center gap-3">
+        <span id="currentUserEmail" class="hidden text-sm text-zinc-500"></span>
+        <button id="signOut" class="hidden text-sm px-3 py-1 rounded-lg bg-zinc-200 hover:bg-zinc-300 transition">Kijelentkezés</button>
+        <a href="./index.html" class="text-sm underline">Vissza a főoldalra</a>
+      </div>
     </div>
   </header>
 
   <main class="max-w-6xl mx-auto px-4 py-6 space-y-4">
     <!-- // [ADD] -->
-    <div id="adminStatus" class="text-sm text-zinc-500"></div>
-    <div class="overflow-x-auto bg-white border rounded-xl">
-      <table class="min-w-full text-sm">
-        <thead class="bg-zinc-100 text-left">
-          <tr>
-            <th class="px-4 py-2">Cím</th>
-            <th class="px-4 py-2">Kategória</th>
-            <th class="px-4 py-2">Beküldve</th>
-            <th class="px-4 py-2">Fájl</th>
-            <th class="px-4 py-2 text-right">Műveletek</th>
-          </tr>
-        </thead>
-        <tbody id="pendingTable"></tbody>
-      </table>
-    </div>
+    <div id="adminStatus" class="text-sm text-zinc-500">Jelentkezz be a moderációhoz.</div>
+
+    <section id="authSection" class="max-w-md space-y-3 bg-white border rounded-xl p-6">
+      <h2 class="text-lg font-semibold">Admin bejelentkezés</h2>
+      <p class="text-sm text-zinc-600">Add meg az admin jogosultsággal rendelkező e-mail címet. Belépési linket küldünk rá, amit csak az admin szereppel rendelkező fiókok tudnak megnyitni.</p>
+      <label class="block space-y-1">
+        <span class="text-sm font-medium text-zinc-700">E-mail cím</span>
+        <input id="adminEmail" type="email" required class="w-full rounded-lg border px-3 py-2 focus:outline-none focus:ring focus:ring-emerald-200" placeholder="admin@domain.hu" />
+      </label>
+      <button id="sendMagicLink" class="w-full rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white py-2 font-medium transition">Belépési link küldése</button>
+      <p class="text-xs text-zinc-500">Győződj meg róla, hogy az admin jogosultság be van állítva a Supabase felhasználói fiókodon. A link az <strong>admin</strong> szereppel rendelkező felhasználóknak lesz érvényes.</p>
+    </section>
+
+    <section id="adminPanel" class="space-y-4 hidden">
+      <div class="overflow-x-auto bg-white border rounded-xl">
+        <table class="min-w-full text-sm">
+          <thead class="bg-zinc-100 text-left">
+            <tr>
+              <th class="px-4 py-2">Cím</th>
+              <th class="px-4 py-2">Kategória</th>
+              <th class="px-4 py-2">Beküldve</th>
+              <th class="px-4 py-2">Fájl</th>
+              <th class="px-4 py-2 text-right">Műveletek</th>
+            </tr>
+          </thead>
+          <tbody id="pendingTable"></tbody>
+        </table>
+      </div>
+    </section>
     <!-- // [END] -->
   </main>
 
