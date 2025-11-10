@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="hu">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>pofatlanitas.hu – Admin</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="./styles.css" />
+  <!-- // [ADD] -->
+  <script type="module" src="./config.js"></script>
+  <!-- // [END] -->
+</head>
+<body class="bg-zinc-50 text-zinc-900">
+  <header class="border-b bg-white">
+    <div class="max-w-6xl mx-auto px-4 py-4 flex flex-wrap items-center justify-between gap-3">
+      <div>
+        <h1 class="text-xl font-semibold">Moderációs felület</h1>
+        <p class="text-sm text-zinc-500">Csak a függőben lévő videók látszanak. ADMIN_MODE = true esetén érhető el a működés.</p>
+      </div>
+      <a href="./index.html" class="text-sm underline">Vissza a főoldalra</a>
+    </div>
+  </header>
+
+  <main class="max-w-6xl mx-auto px-4 py-6 space-y-4">
+    <!-- // [ADD] -->
+    <div id="adminStatus" class="text-sm text-zinc-500"></div>
+    <div class="overflow-x-auto bg-white border rounded-xl">
+      <table class="min-w-full text-sm">
+        <thead class="bg-zinc-100 text-left">
+          <tr>
+            <th class="px-4 py-2">Cím</th>
+            <th class="px-4 py-2">Kategória</th>
+            <th class="px-4 py-2">Beküldve</th>
+            <th class="px-4 py-2">Fájl</th>
+            <th class="px-4 py-2 text-right">Műveletek</th>
+          </tr>
+        </thead>
+        <tbody id="pendingTable"></tbody>
+      </table>
+    </div>
+    <!-- // [END] -->
+  </main>
+
+  <!-- // [ADD] -->
+  <script type="module" src="./admin.js"></script>
+  <!-- // [END] -->
+</body>
+</html>
